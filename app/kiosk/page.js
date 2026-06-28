@@ -1,4 +1,4 @@
-"use client"; // 共有タブレット用の打刻モード（ブラウザで動かす部品）
+"use client"; // 共有タブレット用の打刻専用ページ（ログイン不要）
 
 import { useEffect, useRef, useState } from "react";
 import { supabase, createTempClient } from "@/lib/supabaseClient";
@@ -13,7 +13,6 @@ const PUNCH_LABELS = {
   out: "退勤",
 };
 
-// 今の状態：none(未出勤)/working(勤務中)/on_break(休憩中)/finished(退勤済)
 function attState(today) {
   if (!today.length) return "none";
   const last = today[today.length - 1].type;
@@ -22,27 +21,25 @@ function attState(today) {
   return "working";
 }
 
-export default function Kiosk({ onExit }) {
-  const [staff, setStaff] = useState([]); // 在籍スタッフ一覧
-  const [stage, setStage] = useState("grid"); // grid → password → punch
-  const [selected, setSelected] = useState(null); // 選んだスタッフ
+export default function KioskPage() {
+  const [staff, setStaff] = useState([]);
+  const [staffId, setStaffId] = useState("");
   const [password, setPassword] = useState("");
-  const [today, setToday] = useState([]); // 選んだ人の今日の打刻
+  const [stage, setStage] = useState("select");
+  const [today, setToday] = useState([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
-  const tempRef = useRef(null); // その人として一時的にログインしたクライアント
+  const tempRef = useRef(null);
 
-  // 名前ボタンの一覧を読み込む（店長セッションで読める）
+  // 名前一覧を取得（ログイン不要の安全な関数を呼ぶ）
   useEffect(() => {
-    supabase
-      .from("profiles")
-      .select("id, full_name, staff_no, store, active")
-      .order("full_name")
-      .then(({ data }) =>
-        setStaff((data || []).filter((p) => p.active !== false))
-      );
+    supabase.rpc("kiosk_staff_list").then(({ data, error }) => {
+      if (!error) setStaff(data || []);
+    });
   }, []);
+
+  const selected = staff.find((s) => s.id === staffId) || null;
 
   async function cleanupTemp() {
     if (tempRef.current) {
@@ -51,23 +48,6 @@ export default function Kiosk({ onExit }) {
       } catch {}
       tempRef.current = null;
     }
-  }
-
-  async function backToGrid() {
-    await cleanupTemp();
-    setSelected(null);
-    setPassword("");
-    setToday([]);
-    setError("");
-    setMsg("");
-    setStage("grid");
-  }
-
-  function pickStaff(p) {
-    setSelected(p);
-    setPassword("");
-    setError("");
-    setStage("password");
   }
 
   async function loadToday(client, id) {
@@ -83,8 +63,9 @@ export default function Kiosk({ onExit }) {
       .sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
   }
 
-  // パスワードを確認（その人として一瞬ログイン）→ 今日の打刻を読む
+  // 名前＋パスワードを確認（その人として一瞬ログイン）
   async function verify() {
+    if (!staffId) return setError("名前を選んでください。");
     if (!password) return setError("パスワードを入力してください。");
     setBusy(true);
     setError("");
@@ -111,7 +92,7 @@ export default function Kiosk({ onExit }) {
   }
 
   async function punch(type) {
-    if (!tempRef.current) return;
+    if (!tempRef.current || !selected) return;
     setBusy(true);
     try {
       const { error } = await tempRef.current
@@ -127,76 +108,69 @@ export default function Kiosk({ onExit }) {
     }
   }
 
+  async function reset() {
+    await cleanupTemp();
+    setStaffId("");
+    setPassword("");
+    setToday([]);
+    setError("");
+    setMsg("");
+    setStage("select");
+  }
+
   return (
-    <div
-      className="auth-screen"
-      style={{ display: "block", padding: 0, overflowY: "auto" }}
-    >
-      <div style={{ maxWidth: 520, margin: "0 auto", padding: 16 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "8px 4px 16px",
-          }}
-        >
-          <strong style={{ fontSize: 18 }}>📟 打刻モード</strong>
-          <button
-            className="act-btn"
-            onClick={async () => {
-              if (confirm("打刻モードを終了しますか？")) {
-                await cleanupTemp();
-                onExit();
-              }
-            }}
-          >
-            終了
-          </button>
+    <div className="wrap">
+      <header>
+        <div className="brand">
+          <span aria-hidden="true" style={{ fontSize: 20, lineHeight: 1 }}>
+            ☕
+          </span>
+          <h1>
+            <span className="cafe">Cafe</span>
+            <span className="more">
+              MORE<i></i>
+            </span>
+          </h1>
+          <span className="sub">打刻</span>
         </div>
+      </header>
 
-        {/* ① 名前を選ぶ */}
-        {stage === "grid" && (
-          <div>
-            <div className="att-status">自分の名前をタップしてください</div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: 10,
-              }}
-            >
-              {staff.map((p) => (
-                <button
-                  key={p.id}
-                  className="att-btn ready"
-                  onClick={() => pickStaff(p)}
-                >
-                  {p.full_name || "名無し"}
-                </button>
-              ))}
-            </div>
-            {!staff.length && (
-              <p style={{ padding: 16, color: "#7A6B5C" }}>
-                スタッフを読み込んでいます…
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* ② パスワード入力 */}
-        {stage === "password" && selected && (
-          <div className="card form">
+      <main>
+        {stage === "select" && (
+          <section className="card form">
             <p className="form-title">
-              <span className="bar"></span>
-              {selected.full_name} さん
+              <span className="bar"></span>出勤・退勤の打刻
             </p>
+            <div className="field">
+              <label htmlFor="kstaff">名前</label>
+              <select
+                id="kstaff"
+                value={staffId}
+                onChange={(e) => setStaffId(e.target.value)}
+                style={{
+                  width: "100%",
+                  border: "1.5px solid var(--line)",
+                  borderRadius: 11,
+                  padding: "12px 13px",
+                  fontSize: 15,
+                  fontFamily: "inherit",
+                  background: "#fff",
+                  color: "var(--ink)",
+                }}
+              >
+                <option value="">— 選んでください —</option>
+                {staff.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.full_name || "名無し"}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="field">
               <label htmlFor="kpw">パスワード</label>
               <input
                 id="kpw"
                 type="password"
-                autoFocus
                 placeholder="ログイン用パスワード"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -209,17 +183,9 @@ export default function Kiosk({ onExit }) {
             <button className="submit" onClick={verify} disabled={busy}>
               {busy ? "確認中…" : "次へ"}
             </button>
-            <button
-              className="act-btn"
-              style={{ width: "100%", marginTop: 8 }}
-              onClick={backToGrid}
-            >
-              もどる
-            </button>
-          </div>
+          </section>
         )}
 
-        {/* ③ 打刻 */}
         {stage === "punch" &&
           selected &&
           (() => {
@@ -292,14 +258,14 @@ export default function Kiosk({ onExit }) {
                 <button
                   className="submit"
                   style={{ marginTop: 16 }}
-                  onClick={backToGrid}
+                  onClick={reset}
                 >
                   とじる（次の人へ）
                 </button>
               </div>
             );
           })()}
-      </div>
+      </main>
     </div>
   );
 }

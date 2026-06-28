@@ -252,6 +252,24 @@
   </div>
 </div>
 
+<!-- ===== パスワード変更（ログイン中に自分で） ===== -->
+<div class="auth-screen" id="pwChangeScreen" style="display:none;">
+  <div class="card auth-card">
+    <p class="form-title"><span class="bar"></span>パスワードの変更</p>
+    <div class="field">
+      <label for="pwNew">新しいパスワード</label>
+      <input type="password" id="pwNew" placeholder="6文字以上" autocomplete="new-password" />
+    </div>
+    <div class="field">
+      <label for="pwNew2">もう一度</label>
+      <input type="password" id="pwNew2" placeholder="確認のため再入力" autocomplete="new-password" />
+    </div>
+    <div class="error" id="pwChangeError" role="alert"></div>
+    <button class="submit" id="pwChangeSave" type="button">変更する</button>
+    <button class="act-btn" id="pwChangeCancel" type="button" style="width:100%; margin-top:8px;">キャンセル</button>
+  </div>
+</div>
+
 <div class="wrap">
   <header>
     <div class="brand">
@@ -261,7 +279,10 @@
     </div>
     <div class="head-row" id="userBar" style="display:none;">
       <span class="who"><span id="whoName"></span><span class="who-role" id="whoRole"></span></span>
-      <button type="button" id="logoutBtn" class="logout">ログアウト</button>
+      <span style="display:flex; gap:6px;">
+        <button type="button" id="pwChangeBtn" class="logout">パスワード</button>
+        <button type="button" id="logoutBtn" class="logout">ログアウト</button>
+      </span>
     </div>
     <div class="head-row" style="justify-content:flex-end;">
       <span id="mode" class="mode demo"><span class="dot" style="background:#E7C98A"></span>デモ表示</span>
@@ -380,6 +401,15 @@
 
       <div class="list-head"><h2>今日の記録</h2><span id="attSummary"></span></div>
       <section id="attList" aria-live="polite"></section>
+
+      <!-- 全員の勤怠（管理者・店長だけ） -->
+      <div id="attAdmin" style="display:none;">
+        <div class="list-head" style="justify-content:space-between;">
+          <h2>全員の勤怠</h2>
+          <input type="date" id="attAdminDate" style="border:1.5px solid var(--line); border-radius:9px; padding:7px 9px; font-family:inherit; font-size:13px;" />
+        </div>
+        <section id="attAdminList" aria-live="polite"></section>
+      </div>
     </div>
   </main>
 </div>
@@ -1091,7 +1121,7 @@ function switchTab(which){
   $("viewAttendance").style.display = rep ? "none" : "";
   $("tabReports").classList.toggle("on", rep);
   $("tabAttendance").classList.toggle("on", !rep);
-  if (!rep){ loadAttendance().then(renderAttendance); }
+  if (!rep){ loadAttendance().then(renderAttendance); renderAttAdmin(); }
 }
 
 /* 今日の打刻を読み込む */
@@ -1123,21 +1153,27 @@ function fmtDur(ms){
   return Math.floor(m / 60) + "時間" + (m % 60) + "分";
 }
 
-/* 合計勤務・休憩の表示文（働いた区間だけ足す。中抜け＝退勤〜次の出勤は勤務に入れない） */
-function attSummaryText(){
-  if (!attToday.length) return "";
-  let worked = 0, brk = 0, workSince = null, breakSince = null;
-  for (const r of attToday){
+/* 打刻イベント（古い順）から、働いた区間だけ合算（中抜けは勤務に入れない） */
+function computeWork(events){
+  let worked = 0, brk = 0, workSince = null, breakSince = null, firstIn = null, lastOut = null;
+  for (const r of events){
     const t = new Date(r.created_at).getTime();
-    if (r.type === "in"){ workSince = t; }
+    if (r.type === "in"){ workSince = t; if (!firstIn) firstIn = r; }
     else if (r.type === "break_start"){ if (workSince != null){ worked += t - workSince; workSince = null; } breakSince = t; }
     else if (r.type === "break_end"){ if (breakSince != null){ brk += t - breakSince; breakSince = null; } workSince = t; }
-    else if (r.type === "out"){ if (workSince != null){ worked += t - workSince; workSince = null; } }
+    else if (r.type === "out"){ if (workSince != null){ worked += t - workSince; workSince = null; } lastOut = r; }
   }
   const now = Date.now();
   if (workSince  != null) worked += now - workSince;    // 勤務中
   if (breakSince != null) brk    += now - breakSince;   // 休憩中
-  return "勤務 " + fmtDur(worked) + "（休憩 " + fmtDur(brk) + "）";
+  return { worked, brk, firstIn, lastOut };
+}
+
+/* 合計勤務・休憩の表示文 */
+function attSummaryText(){
+  if (!attToday.length) return "";
+  const s = computeWork(attToday);
+  return "勤務 " + fmtDur(s.worked) + "（休憩 " + fmtDur(s.brk) + "）";
 }
 
 function renderAttendance(){
@@ -1182,6 +1218,71 @@ async function onPunch(type){
   }
 }
 
+/* 全員の勤怠（管理者・店長だけ） */
+async function loadAllAttendanceFor(dateStr){
+  if (!supa) return [];
+  const { data, error } = await supa.from("attendance")
+    .select("*").order("created_at", { ascending:true }).limit(3000);
+  if (error){ console.error(error); return []; }
+  return (data || []).filter(r => localDateStr(r.created_at) === dateStr);
+}
+
+async function renderAttAdmin(){
+  const panel = $("attAdmin");
+  if (!canManageRoles()){ panel.style.display = "none"; return; }
+  panel.style.display = "";
+  if (!staffList.length) await loadStaff();
+  const nameOf = (id) => { const p = staffList.find(s => s.id === id); return p ? (p.full_name || "名無し") : "(不明)"; };
+
+  const dateStr = $("attAdminDate").value || todayStr();
+  const rows = await loadAllAttendanceFor(dateStr);
+  const byUser = {};
+  rows.forEach(r => { (byUser[r.user_id] = byUser[r.user_id] || []).push(r); });
+  const ids = Object.keys(byUser);
+
+  const list = $("attAdminList");
+  if (!ids.length){
+    list.innerHTML = '<div class="empty"><div class="em-ic">⏰</div><h3>この日の打刻はありません</h3></div>';
+    return;
+  }
+  list.innerHTML = ids.map(id => {
+    const s = computeWork(byUser[id]);
+    const inT  = s.firstIn ? fmtTime(s.firstIn.created_at) : "—";
+    const outT = s.lastOut ? fmtTime(s.lastOut.created_at) : "勤務中";
+    return '<div class="att-log"><div class="staff-main">' +
+             '<div class="staff-name">' + esc(nameOf(id)) + '</div>' +
+             '<div class="staff-meta">' + inT + ' 〜 ' + outT + '</div>' +
+           '</div><span class="lbl">' + fmtDur(s.worked) + '</span></div>';
+  }).join("");
+}
+
+/* パスワード変更（ログイン中の自分） */
+function openPwChange(){
+  $("pwNew").value = ""; $("pwNew2").value = "";
+  $("pwChangeError").classList.remove("show");
+  $("pwChangeScreen").style.display = "flex";
+}
+function closePwChange(){ $("pwChangeScreen").style.display = "none"; }
+
+async function onPwChangeSave(){
+  const a = $("pwNew").value, b = $("pwNew2").value;
+  const err = $("pwChangeError"); err.classList.remove("show");
+  if (!a || a.length < 6){ err.textContent = "パスワードは6文字以上にしてください。"; err.classList.add("show"); return; }
+  if (a !== b){ err.textContent = "2つのパスワードが一致しません。"; err.classList.add("show"); return; }
+  const btn = $("pwChangeSave"); const o = btn.textContent;
+  btn.disabled = true; btn.textContent = "変更中…";
+  try{
+    const { error } = await supa.auth.updateUser({ password: a });
+    if (error) throw error;
+    closePwChange();
+    toast("パスワードを変更しました");
+  }catch(e){
+    console.error(e); err.textContent = authErrorJa(e); err.classList.add("show");
+  }finally{
+    btn.disabled = false; btn.textContent = o;
+  }
+}
+
 /* ===================== アプリ本体の起動 ===================== */
 async function bootApp(){
   if (booted) return; booted = true;
@@ -1209,6 +1310,11 @@ async function bootApp(){
   $("tabReports").addEventListener("click", () => switchTab("reports"));       // タブ
   $("tabAttendance").addEventListener("click", () => switchTab("attendance"));
   document.querySelectorAll(".att-btn").forEach(b => b.addEventListener("click", () => onPunch(b.dataset.punch)));
+  $("attAdminDate").value = todayStr();
+  $("attAdminDate").addEventListener("change", renderAttAdmin);   // 全員の勤怠の日付
+  $("pwChangeBtn").addEventListener("click", openPwChange);       // パスワード変更
+  $("pwChangeCancel").addEventListener("click", closePwChange);
+  $("pwChangeSave").addEventListener("click", onPwChangeSave);
   // 本文でEnterは改行のまま。名前欄でEnter→投稿
   $("author").addEventListener("keydown", (e) => { if (e.key === "Enter"){ e.preventDefault(); onSubmit(); } });
 

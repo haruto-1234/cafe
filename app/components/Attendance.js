@@ -6,6 +6,7 @@ import { fmtTime, todayStr } from "@/lib/format";
 import { localDateStr, fmtDur, computeWork } from "@/lib/attendance";
 import { canManageRoles } from "@/lib/permissions";
 import AttendanceAdmin from "./AttendanceAdmin";
+import MonthlyReport from "./MonthlyReport";
 
 const PUNCH_LABELS = {
   in: "出勤",
@@ -139,8 +140,13 @@ export default function Attendance({ profile }) {
         ))
       )}
 
-      {/* 店長以上には「全員の勤怠」を表示 */}
-      {canManageRoles(profile) && <AttendanceAdmin />}
+      {/* 店長以上には「全員の勤怠」と「月次集計」を表示 */}
+      {canManageRoles(profile) && (
+        <>
+          <AttendanceAdmin />
+          <MonthlyReport />
+        </>
+      )}
     </div>
   );
 }

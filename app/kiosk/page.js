@@ -1,6 +1,6 @@
-"use client"; // 共有タブレット用の打刻専用ページ（ログイン不要）
+"use client"; // 共有タブレット用の打刻専用ページ（ログイン不要・1画面）
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase, createTempClient } from "@/lib/supabaseClient";
 import { toEmail } from "@/lib/constants";
 import { fmtTime, todayStr } from "@/lib/format";
@@ -11,6 +11,18 @@ const PUNCH_LABELS = {
   break_start: "休憩開始",
   break_end: "休憩終了",
   out: "退勤",
+};
+const STATUS_TEXT = {
+  none: "未出勤",
+  working: "勤務中",
+  on_break: "休憩中",
+  finished: "退勤済み",
+};
+const ALLOWED = {
+  none: ["in"],
+  working: ["break_start", "out"],
+  on_break: ["break_end"],
+  finished: ["in"],
 };
 
 function attState(today) {
@@ -25,12 +37,9 @@ export default function KioskPage() {
   const [staff, setStaff] = useState([]);
   const [staffId, setStaffId] = useState("");
   const [password, setPassword] = useState("");
-  const [stage, setStage] = useState("select");
-  const [today, setToday] = useState([]);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
-  const tempRef = useRef(null);
+  const [busy, setBusy] = useState(false);
 
   // 名前一覧を取得（ログイン不要の安全な関数を呼ぶ）
   useEffect(() => {
@@ -40,15 +49,6 @@ export default function KioskPage() {
   }, []);
 
   const selected = staff.find((s) => s.id === staffId) || null;
-
-  async function cleanupTemp() {
-    if (tempRef.current) {
-      try {
-        await tempRef.current.auth.signOut();
-      } catch {}
-      tempRef.current = null;
-    }
-  }
 
   async function loadToday(client, id) {
     const { data } = await client
@@ -63,15 +63,16 @@ export default function KioskPage() {
       .sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
   }
 
-  // 名前＋パスワードを確認（その人として一瞬ログイン）
-  async function verify() {
+  // ボタンを押す → パスワード確認 → 状態チェック → 記録（すべてこの1画面で）
+  async function punch(type) {
+    setError("");
+    setMsg("");
     if (!staffId) return setError("名前を選んでください。");
     if (!password) return setError("パスワードを入力してください。");
     setBusy(true);
-    setError("");
+    const temp = createTempClient();
     try {
-      await cleanupTemp();
-      const temp = createTempClient();
+      // その人として一瞬ログイン（＝パスワード確認）
       const { error } = await temp.auth.signInWithPassword({
         email: toEmail(selected.staff_no),
         password,
@@ -80,43 +81,46 @@ export default function KioskPage() {
         setError("パスワードが違います。");
         return;
       }
-      tempRef.current = temp;
-      setToday(await loadToday(temp, selected.id));
-      setMsg("");
-      setStage("punch");
-    } catch (e) {
-      setError("確認できませんでした。通信状況を確認してください。");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function punch(type) {
-    if (!tempRef.current || !selected) return;
-    setBusy(true);
-    try {
-      const { error } = await tempRef.current
+      // いまの状態を見て、その打刻が可能かチェック
+      const before = await loadToday(temp, selected.id);
+      const st = attState(before);
+      if (!ALLOWED[st].includes(type)) {
+        setError(
+          `いま「${PUNCH_LABELS[type]}」はできません（状態：${STATUS_TEXT[st]}）。`
+        );
+        return;
+      }
+      // 記録
+      const { error: e2 } = await temp
         .from("attendance")
         .insert({ user_id: selected.id, type, store: selected.store || null });
-      if (error) throw error;
-      setToday(await loadToday(tempRef.current, selected.id));
-      setMsg(`${PUNCH_LABELS[type]} を記録しました ✅`);
+      if (e2) throw e2;
+      const after = await loadToday(temp, selected.id);
+      const last = after[after.length - 1];
+      setMsg(
+        `${selected.full_name} さん、${PUNCH_LABELS[type]}を記録しました（${
+          last ? fmtTime(last.created_at) : ""
+        }）✅`
+      );
+      // 次の人のためにリセット
+      setStaffId("");
+      setPassword("");
     } catch (e) {
-      setMsg("記録できませんでした。もう一度お試しください。");
+      setError("記録できませんでした。もう一度お試しください。");
     } finally {
+      try {
+        await temp.auth.signOut();
+      } catch {}
       setBusy(false);
     }
   }
 
-  async function reset() {
-    await cleanupTemp();
-    setStaffId("");
-    setPassword("");
-    setToday([]);
-    setError("");
-    setMsg("");
-    setStage("select");
-  }
+  const buttons = [
+    { type: "in", label: "出勤", danger: false },
+    { type: "break_start", label: "休憩開始", danger: false },
+    { type: "break_end", label: "休憩終了", danger: false },
+    { type: "out", label: "退勤", danger: true },
+  ];
 
   return (
     <div className="wrap">
@@ -136,135 +140,80 @@ export default function KioskPage() {
       </header>
 
       <main>
-        {stage === "select" && (
-          <section className="card form">
-            <p className="form-title">
-              <span className="bar"></span>出勤・退勤の打刻
-            </p>
-            <div className="field">
-              <label htmlFor="kstaff">名前</label>
-              <select
-                id="kstaff"
-                value={staffId}
-                onChange={(e) => setStaffId(e.target.value)}
-                style={{
-                  width: "100%",
-                  border: "1.5px solid var(--line)",
-                  borderRadius: 11,
-                  padding: "12px 13px",
-                  fontSize: 15,
-                  fontFamily: "inherit",
-                  background: "#fff",
-                  color: "var(--ink)",
-                }}
+        <section className="card form">
+          <p className="form-title">
+            <span className="bar"></span>出勤・退勤の打刻
+          </p>
+
+          <div className="field">
+            <label htmlFor="kstaff">名前</label>
+            <select
+              id="kstaff"
+              value={staffId}
+              onChange={(e) => {
+                setStaffId(e.target.value);
+                setError("");
+                setMsg("");
+              }}
+              style={{
+                width: "100%",
+                border: "1.5px solid var(--line)",
+                borderRadius: 11,
+                padding: "12px 13px",
+                fontSize: 15,
+                fontFamily: "inherit",
+                background: "#fff",
+                color: "var(--ink)",
+              }}
+            >
+              <option value="">— 選んでください —</option>
+              {staff.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.full_name || "名無し"}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field">
+            <label htmlFor="kpw">パスワード</label>
+            <input
+              id="kpw"
+              type="password"
+              placeholder="ログイン用パスワード"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </div>
+
+          {error && <div className="error show">{error}</div>}
+          {msg && (
+            <div
+              className="att-status"
+              style={{
+                background: "#1F3A2C",
+                color: "#7FD3A1",
+                marginBottom: 12,
+              }}
+            >
+              {msg}
+            </div>
+          )}
+
+          <div className="att-buttons">
+            {buttons.map((b) => (
+              <button
+                key={b.type}
+                type="button"
+                className={"att-btn ready" + (b.danger ? " danger" : "")}
+                disabled={busy}
+                onClick={() => punch(b.type)}
               >
-                <option value="">— 選んでください —</option>
-                {staff.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.full_name || "名無し"}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
-              <label htmlFor="kpw">パスワード</label>
-              <input
-                id="kpw"
-                type="password"
-                placeholder="ログイン用パスワード"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") verify();
-                }}
-              />
-            </div>
-            {error && <div className="error show">{error}</div>}
-            <button className="submit" onClick={verify} disabled={busy}>
-              {busy ? "確認中…" : "次へ"}
-            </button>
-          </section>
-        )}
-
-        {stage === "punch" &&
-          selected &&
-          (() => {
-            const st = attState(today);
-            const allowed =
-              {
-                none: ["in"],
-                working: ["break_start", "out"],
-                on_break: ["break_end"],
-                finished: ["in"],
-              }[st] || [];
-            const statusText = {
-              none: "未出勤",
-              working: "勤務中 🟢",
-              on_break: "休憩中 🟡",
-              finished: "退勤済み ✅（再出勤できます）",
-            }[st];
-            const buttons = [
-              { type: "in", label: "出勤", danger: false },
-              { type: "break_start", label: "休憩開始", danger: false },
-              { type: "break_end", label: "休憩終了", danger: false },
-              { type: "out", label: "退勤", danger: true },
-            ];
-            return (
-              <div>
-                <p className="form-title" style={{ fontSize: 16 }}>
-                  <span className="bar"></span>
-                  {selected.full_name} さん
-                </p>
-                <div className="att-status">今の状態：{statusText}</div>
-                {msg && (
-                  <div
-                    className="att-status"
-                    style={{ background: "#1F3A2C", color: "#7FD3A1" }}
-                  >
-                    {msg}
-                  </div>
-                )}
-                <div className="att-buttons">
-                  {buttons.map((b) => {
-                    const ok = allowed.includes(b.type);
-                    return (
-                      <button
-                        key={b.type}
-                        className={
-                          "att-btn" +
-                          (ok ? " ready" : "") +
-                          (b.danger ? " danger" : "")
-                        }
-                        disabled={!ok || busy}
-                        onClick={() => punch(b.type)}
-                      >
-                        {b.label}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {today.length > 0 && (
-                  <div style={{ marginTop: 14 }}>
-                    {today.map((r) => (
-                      <div className="att-log" key={r.id}>
-                        <span className="t">{fmtTime(r.created_at)}</span>
-                        <span className="lbl">{PUNCH_LABELS[r.type]}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <button
-                  className="submit"
-                  style={{ marginTop: 16 }}
-                  onClick={reset}
-                >
-                  とじる（次の人へ）
-                </button>
-              </div>
-            );
-          })()}
+                {b.label}
+              </button>
+            ))}
+          </div>
+        </section>
       </main>
     </div>
   );

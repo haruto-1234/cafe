@@ -78,7 +78,7 @@
   .field{ margin-bottom:14px; }
   .field label{ display:flex; align-items:center; gap:7px; font-size:13px; font-weight:700; margin-bottom:7px; }
   .req{ font-style:normal; font-size:10px; font-weight:700; color:#C2703D; background:#F6E7DA; padding:2px 6px; border-radius:5px; }
-  input[type=date], input[type=text], textarea{
+  input[type=date], input[type=text], input[type=password], textarea{
     width:100%; border:1.5px solid var(--line); background:#fff; border-radius:11px;
     padding:12px 13px; font-size:15px; color:var(--ink); outline:0; font-family:inherit; transition:border .15s ease;
   }
@@ -141,17 +141,70 @@
   .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
   .toast .check{ color:#7FD08A; font-weight:800; }
 
+  /* ---------- ログイン画面 ---------- */
+  .auth-screen{ position:fixed; inset:0; z-index:80; background:var(--bg);
+    display:flex; align-items:center; justify-content:center; padding:20px; overflow:auto; }
+  .auth-card{ width:100%; max-width:380px; padding:20px 18px 22px; box-shadow:0 10px 30px rgba(42,33,27,.12); }
+  .auth-tabs{ display:flex; gap:8px; margin-bottom:16px; }
+  .auth-tab{ flex:1; padding:11px; border:1.5px solid var(--line); background:#fff; color:var(--ink2);
+    font-size:14px; font-weight:800; border-radius:11px; cursor:pointer; font-family:inherit; transition:all .12s ease; }
+  .auth-tab.on{ background:var(--ink); color:#F4ECDD; border-color:var(--ink); }
+
+  /* ---------- ログイン中の表示（ヘッダー） ---------- */
+  .who{ font-size:13px; color:#E9DFCC; font-weight:700; }
+  .who-role{ font-size:10.5px; color:#E7C98A; background:#4A3D2E; padding:2px 8px; border-radius:999px; margin-left:6px; font-weight:700; }
+  .logout{ font-size:11.5px; font-weight:700; color:#E9DFCC; background:transparent; border:1px solid #574A3C;
+    border-radius:8px; padding:6px 11px; cursor:pointer; font-family:inherit; transition:background .12s ease; }
+  .logout:hover{ background:#3a3025; }
+
   button:focus-visible, input:focus-visible, textarea:focus-visible{ outline:2.5px solid var(--crema); outline-offset:1px; }
   @media(prefers-reduced-motion:reduce){ *{ animation-duration:.001ms!important; transition-duration:.001ms!important; } }
 </style>
 </head>
 <body>
+<!-- ===== ログイン画面（未ログイン時に全画面表示） ===== -->
+<div class="auth-screen" id="authScreen" style="display:none;">
+  <div class="card auth-card">
+    <p class="form-title"><span class="bar"></span>Cafe MORE にログイン</p>
+    <div class="auth-tabs">
+      <button type="button" id="tabLogin" class="auth-tab on">ログイン</button>
+      <button type="button" id="tabSignup" class="auth-tab">新規登録</button>
+    </div>
+
+    <div class="field">
+      <label for="authStaffNo">スタッフ番号</label>
+      <input type="text" id="authStaffNo" inputmode="numeric" placeholder="例：1001" autocomplete="username" />
+    </div>
+
+    <div class="field signup-only" style="display:none;">
+      <label for="authName">名前</label>
+      <input type="text" id="authName" maxlength="40" placeholder="例：田中" />
+    </div>
+    <div class="field signup-only" style="display:none;">
+      <label>店舗</label>
+      <div class="seg" id="authStoreSeg" role="group" aria-label="店舗を選択"></div>
+    </div>
+
+    <div class="field">
+      <label for="authPassword">パスワード</label>
+      <input type="password" id="authPassword" autocomplete="current-password" placeholder="6文字以上" />
+    </div>
+
+    <div class="error" id="authError" role="alert" aria-live="assertive"></div>
+    <button class="submit" id="authSubmit" type="button">ログイン</button>
+  </div>
+</div>
+
 <div class="wrap">
   <header>
     <div class="brand">
       <span aria-hidden="true" style="font-size:20px;line-height:1;">☕</span>
       <h1><span class="cafe">Cafe</span><span class="more">MORE<i></i></span></h1>
       <span class="sub">日報</span>
+    </div>
+    <div class="head-row" id="userBar" style="display:none;">
+      <span class="who"><span id="whoName"></span><span class="who-role" id="whoRole"></span></span>
+      <button type="button" id="logoutBtn" class="logout">ログアウト</button>
     </div>
     <div class="head-row" style="justify-content:flex-end;">
       <span id="mode" class="mode demo"><span class="dot" style="background:#E7C98A"></span>デモ表示</span>
@@ -238,6 +291,10 @@ function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&l
 /* ===================== データ層（Supabase / フォールバック） ===================== */
 let DB = null;
 let MODE = "demo";
+let supa = null;                 // Supabaseクライアント（ログイン処理で使う）
+let CURRENT_USER = null;         // ログイン中のユーザー（auth）
+let CURRENT_PROFILE = null;      // ログイン中のスタッフ情報（profiles）
+let booted = false;              // アプリ本体を起動済みか
 
 function loadScript(src){
   return new Promise((res, rej) => {
@@ -257,7 +314,8 @@ function makeSupabaseDB(client){
     },
     async add(r){
       const { data, error } = await client.from("reports")
-        .insert({ report_date:r.date, store:r.store, author:r.author, body:r.body })
+        .insert({ report_date:r.date, store:r.store, author:r.author, body:r.body,
+                  user_id: (CURRENT_USER ? CURRENT_USER.id : null) })
         .select().single();
       if (error) throw error;
       return map(data);
@@ -291,6 +349,7 @@ async function initDB(){
     try{
       await loadScript("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js");
       const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      supa = client;
       DB = makeSupabaseDB(client);
       MODE = "live";
       return;
@@ -424,20 +483,171 @@ async function onSubmit(){
   }
 }
 
-/* ===================== 起動 ===================== */
-(async function init(){
+/* ===================== ログイン（認証） ===================== */
+const EMAIL_DOMAIN = "@cafe-more.local";          // 番号 → 内部用メールアドレスに変換
+const toEmail = (no) => String(no).trim() + EMAIL_DOMAIN;
+const ROLE_LABELS = { admin:"管理者", manager:"店長", fulltime:"正社員", leader:"リーダー", part:"パート・アルバイト" };
+const roleLabel = (r) => ROLE_LABELS[r] || r || "";
+
+let authMode = "login";                            // "login" または "signup"
+let authStore = STORES[0].name;
+
+function showAuth(show){ $("authScreen").style.display = show ? "flex" : "none"; }
+function showAuthError(msg){ const e = $("authError"); e.textContent = msg; e.classList.add("show"); }
+function clearAuthError(){ $("authError").classList.remove("show"); }
+
+function setAuthMode(m){
+  authMode = m;
+  $("tabLogin").classList.toggle("on", m === "login");
+  $("tabSignup").classList.toggle("on", m === "signup");
+  document.querySelectorAll(".signup-only").forEach(el => el.style.display = (m === "signup") ? "" : "none");
+  $("authSubmit").textContent = (m === "signup") ? "登録してはじめる" : "ログイン";
+  clearAuthError();
+}
+
+function renderAuthStoreSeg(){
+  const seg = $("authStoreSeg"); seg.innerHTML = "";
+  STORES.forEach(s => {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = s.name;
+    const apply = () => {
+      authStore = s.name;
+      [...seg.children].forEach(c => { c.classList.remove("on"); c.style.background = ""; c.style.borderColor = ""; });
+      b.classList.add("on"); b.style.background = s.color; b.style.borderColor = s.color;
+    };
+    b.addEventListener("click", apply); seg.appendChild(b);
+    if (s.name === authStore) apply();
+  });
+}
+
+function authErrorJa(e){
+  const m = (e && e.message) ? e.message : String(e);
+  if (/Invalid login credentials/i.test(m)) return "スタッフ番号またはパスワードが違います。";
+  if (/already registered|already exists/i.test(m)) return "このスタッフ番号はすでに登録されています。";
+  if (/at least 6/i.test(m)) return "パスワードは6文字以上にしてください。";
+  if (/Email not confirmed/i.test(m)) return "メール確認設定がONです。Supabaseで『Confirm email』をOFFにしてください。";
+  if (/disabled/i.test(m)) return "Supabase側でメール登録/ログインが無効になっています。";
+  return "うまくいきませんでした：" + m;
+}
+
+async function refreshSession(){
+  if (!supa) return null;
+  const { data } = await supa.auth.getSession();
+  CURRENT_USER = data.session ? data.session.user : null;
+  return CURRENT_USER;
+}
+
+async function loadProfile(){
+  CURRENT_PROFILE = null;
+  if (!supa || !CURRENT_USER) return;
+  const { data } = await supa.from("profiles").select("*").eq("id", CURRENT_USER.id).single();
+  CURRENT_PROFILE = data || null;
+}
+
+function renderUserBar(){
+  const bar = $("userBar");
+  if (MODE !== "live" || !CURRENT_PROFILE){ bar.style.display = "none"; return; }
+  bar.style.display = "flex";
+  $("whoName").textContent = CURRENT_PROFILE.full_name || "名無し";
+  $("whoRole").textContent = roleLabel(CURRENT_PROFILE.role);
+}
+
+async function onAuthSubmit(){
+  const no = $("authStaffNo").value.trim();
+  const pw = $("authPassword").value;
+  if (!no){ showAuthError("スタッフ番号を入力してください。"); return; }
+  if (!pw || pw.length < 6){ showAuthError("パスワードは6文字以上で入力してください。"); return; }
+  clearAuthError();
+
+  const btn = $("authSubmit"); const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = "処理中…";
+  try{
+    if (authMode === "signup"){
+      const name = $("authName").value.trim() || "名無し";
+      const { error } = await supa.auth.signUp({
+        email: toEmail(no), password: pw,
+        options: { data: { staff_no: no, full_name: name, store: authStore } },
+      });
+      if (error) throw error;
+    } else {
+      const { error } = await supa.auth.signInWithPassword({ email: toEmail(no), password: pw });
+      if (error) throw error;
+    }
+    await refreshSession();
+    if (!CURRENT_USER){
+      showAuthError("ログインできませんでした。Supabaseの『Confirm email』をOFFにしてください。");
+      return;
+    }
+    await loadProfile();
+    showAuth(false);
+    renderUserBar();
+    await bootApp();
+  }catch(e){
+    console.error(e);
+    showAuthError(authErrorJa(e));
+  }finally{
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+function setupAuthUI(){
+  $("tabLogin").addEventListener("click", () => setAuthMode("login"));
+  $("tabSignup").addEventListener("click", () => setAuthMode("signup"));
+  $("authSubmit").addEventListener("click", onAuthSubmit);
+  $("authPassword").addEventListener("keydown", (e) => { if (e.key === "Enter"){ e.preventDefault(); onAuthSubmit(); } });
+  renderAuthStoreSeg();
+  setAuthMode("login");
+  $("logoutBtn").addEventListener("click", async () => { try{ await supa.auth.signOut(); }catch(e){} location.reload(); });
+}
+
+/* ===================== アプリ本体の起動 ===================== */
+async function bootApp(){
+  if (booted) return; booted = true;
+
+  // ログイン中なら、店舗を自分の所属で初期化
+  if (MODE === "live" && CURRENT_PROFILE && CURRENT_PROFILE.store
+      && STORES.some(s => s.name === CURRENT_PROFILE.store)){
+    selectedStore = CURRENT_PROFILE.store;
+  }
+
   $("date").value = todayStr();
   renderStoreSeg();
   renderStoreFilter();
+
+  // 名前はログイン情報で自動入力＆固定
+  if (MODE === "live" && CURRENT_PROFILE){
+    $("author").value = CURRENT_PROFILE.full_name || "";
+    $("author").readOnly = true;
+  }
+
   $("search").addEventListener("input", (e) => { searchText = e.target.value; renderList(); });
   $("submit").addEventListener("click", onSubmit);
   // 本文でEnterは改行のまま。名前欄でEnter→投稿
   $("author").addEventListener("keydown", (e) => { if (e.key === "Enter"){ e.preventDefault(); onSubmit(); } });
 
-  await initDB();
-  renderMode();
   try{ reports = await DB.list(); }catch(e){ console.error(e); reports = []; }
   renderList();
+}
+
+/* ===================== 起動 ===================== */
+(async function init(){
+  await initDB();
+  renderMode();
+
+  if (MODE === "live"){
+    setupAuthUI();
+    await refreshSession();
+    if (CURRENT_USER){
+      await loadProfile();
+      showAuth(false);
+      renderUserBar();
+      await bootApp();
+    } else {
+      showAuth(true);   // 未ログインならログイン画面を出す
+    }
+  } else {
+    // デモ表示モード（Supabase未接続）はログイン無しで動く
+    await bootApp();
+  }
 })();
 </script>
 </body>

@@ -1269,6 +1269,7 @@ async function onPwChangeSave(){
   const err = $("pwChangeError"); err.classList.remove("show");
   if (!a || a.length < 6){ err.textContent = "パスワードは6文字以上にしてください。"; err.classList.add("show"); return; }
   if (a !== b){ err.textContent = "2つのパスワードが一致しません。"; err.classList.add("show"); return; }
+  if (!confirm("パスワードを変更します。よろしいですか？")) return;
   const btn = $("pwChangeSave"); const o = btn.textContent;
   btn.disabled = true; btn.textContent = "変更中…";
   try{

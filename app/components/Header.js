@@ -1,8 +1,9 @@
 // ☕ ヘッダー部品（コンポーネント）
 // ログイン中は名前・役割・ログアウトボタンも表示する。
 import { roleLabel } from "@/lib/constants";
+import { canManageRoles } from "@/lib/permissions";
 
-export default function Header({ profile, onLogout, onPwChange }) {
+export default function Header({ profile, onLogout, onPwChange, onKiosk }) {
   return (
     <header>
       <div className="brand">
@@ -25,6 +26,11 @@ export default function Header({ profile, onLogout, onPwChange }) {
             <span className="who-role">{roleLabel(profile.role)}</span>
           </span>
           <span style={{ display: "flex", gap: 6 }}>
+            {canManageRoles(profile) && (
+              <button type="button" className="logout" onClick={onKiosk}>
+                打刻モード
+              </button>
+            )}
             <button type="button" className="logout" onClick={onPwChange}>
               パスワード変更
             </button>

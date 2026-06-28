@@ -6,12 +6,14 @@ import Header from "./Header";
 import Tabs from "./Tabs";
 import Login from "./Login";
 import PwChange from "./PwChange";
+import Kiosk from "./Kiosk";
 
 export default function AppShell() {
   const [session, setSession] = useState(null); // ログイン情報（無ければ未ログイン）
   const [profile, setProfile] = useState(null); // スタッフ情報（名前・役割など）
   const [loading, setLoading] = useState(true); // 最初の確認中か
   const [showPw, setShowPw] = useState(false); // パスワード変更画面を出すか
+  const [kioskMode, setKioskMode] = useState(false); // 打刻モード（共有タブレット用）
 
   // 今ログインしているか確認し、していればスタッフ情報も読む
   async function loadSession() {
@@ -53,6 +55,11 @@ export default function AppShell() {
     return <Login onLoggedIn={loadSession} />;
   }
 
+  // 打刻モード（共有タブレット用）は全画面で表示
+  if (kioskMode) {
+    return <Kiosk onExit={() => setKioskMode(false)} />;
+  }
+
   // ログイン済みなら本体
   return (
     <div className="wrap">
@@ -60,6 +67,7 @@ export default function AppShell() {
         profile={profile}
         onLogout={handleLogout}
         onPwChange={() => setShowPw(true)}
+        onKiosk={() => setKioskMode(true)}
       />
       <main>
         <Tabs profile={profile} />

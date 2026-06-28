@@ -149,6 +149,12 @@
   .auth-tab{ flex:1; padding:11px; border:1.5px solid var(--line); background:#fff; color:var(--ink2);
     font-size:14px; font-weight:800; border-radius:11px; cursor:pointer; font-family:inherit; transition:all .12s ease; }
   .auth-tab.on{ background:var(--ink); color:#F4ECDD; border-color:var(--ink); }
+  .pw-wrap{ position:relative; }
+  .pw-wrap input{ padding-right:58px; }
+  .pw-toggle{ position:absolute; right:8px; top:50%; transform:translateY(-50%);
+    border:0; background:transparent; color:var(--ink2); font-size:12.5px; font-weight:700;
+    cursor:pointer; padding:6px 8px; font-family:inherit; border-radius:8px; }
+  .pw-toggle:hover{ color:var(--ink); background:var(--paper); }
 
   /* ---------- ログイン中の表示（ヘッダー） ---------- */
   .who{ font-size:13px; color:#E9DFCC; font-weight:700; }
@@ -156,6 +162,16 @@
   .logout{ font-size:11.5px; font-weight:700; color:#E9DFCC; background:transparent; border:1px solid #574A3C;
     border-radius:8px; padding:6px 11px; cursor:pointer; font-family:inherit; transition:background .12s ease; }
   .logout:hover{ background:#3a3025; }
+
+  /* ---------- スタッフ管理（役割の割り当て） ---------- */
+  .staff-row{ display:flex; align-items:center; gap:10px; padding:11px 0; border-top:1px solid var(--line); }
+  .staff-row:first-child{ border-top:0; }
+  .staff-main{ flex:1; min-width:0; }
+  .staff-name{ font-size:14px; font-weight:700; }
+  .staff-meta{ font-size:11.5px; color:var(--ink2); margin-top:2px; }
+  .staff-row select{ border:1.5px solid var(--line); border-radius:9px; padding:8px 9px;
+    font-size:13px; font-family:inherit; background:#fff; color:var(--ink); cursor:pointer; }
+  .staff-row .me-tag{ font-size:11px; font-weight:700; color:var(--ink2); padding:6px 4px; }
 
   button:focus-visible, input:focus-visible, textarea:focus-visible{ outline:2.5px solid var(--crema); outline-offset:1px; }
   @media(prefers-reduced-motion:reduce){ *{ animation-duration:.001ms!important; transition-duration:.001ms!important; } }
@@ -187,7 +203,10 @@
 
     <div class="field">
       <label for="authPassword">パスワード</label>
-      <input type="password" id="authPassword" autocomplete="current-password" placeholder="6文字以上" />
+      <div class="pw-wrap">
+        <input type="password" id="authPassword" autocomplete="current-password" placeholder="6文字以上" />
+        <button type="button" id="pwToggle" class="pw-toggle" aria-label="パスワードを表示">表示</button>
+      </div>
     </div>
 
     <div class="error" id="authError" role="alert" aria-live="assertive"></div>
@@ -241,6 +260,12 @@
       <div class="error" id="error" role="alert" aria-live="assertive"></div>
 
       <button class="submit" id="submit" type="button">日報を投稿する</button>
+    </section>
+
+    <!-- スタッフ管理（管理者・店長だけに表示） -->
+    <section class="card form" id="staffPanel" style="display:none;">
+      <p class="form-title"><span class="bar"></span>スタッフ管理（役割の割り当て）</p>
+      <div id="staffList"></div>
     </section>
 
     <!-- 下：一覧（新しい順） -->
@@ -594,9 +619,104 @@ function setupAuthUI(){
   $("tabSignup").addEventListener("click", () => setAuthMode("signup"));
   $("authSubmit").addEventListener("click", onAuthSubmit);
   $("authPassword").addEventListener("keydown", (e) => { if (e.key === "Enter"){ e.preventDefault(); onAuthSubmit(); } });
+  $("pwToggle").addEventListener("click", () => {
+    const inp = $("authPassword");
+    const show = inp.type === "password";
+    inp.type = show ? "text" : "password";
+    $("pwToggle").textContent = show ? "隠す" : "表示";
+  });
   renderAuthStoreSeg();
   setAuthMode("login");
   $("logoutBtn").addEventListener("click", async () => { try{ await supa.auth.signOut(); }catch(e){} location.reload(); });
+}
+
+/* ===================== スタッフ管理（役割の割り当て） ===================== */
+const ALL_ROLES = ["admin","manager","fulltime","leader","part"];
+let staffList = [];
+
+function canManageRoles(){
+  return MODE === "live" && CURRENT_PROFILE && (CURRENT_PROFILE.role === "admin" || CURRENT_PROFILE.role === "manager");
+}
+
+// 自分の役割で「割り当てられる役割」を決める（店長は管理者/店長を付与できない）
+function assignableRoles(){
+  if (CURRENT_PROFILE && CURRENT_PROFILE.role === "admin") return ALL_ROLES;
+  return ["fulltime","leader","part"];
+}
+
+async function loadStaff(){
+  staffList = [];
+  if (!supa) return;
+  const { data, error } = await supa.from("profiles").select("*").order("created_at", { ascending:true });
+  if (error){ console.error(error); return; }
+  staffList = data || [];
+}
+
+function renderStaffPanel(){
+  const panel = $("staffPanel");
+  if (!canManageRoles()){ panel.style.display = "none"; return; }
+  panel.style.display = "";
+
+  const box = $("staffList");
+  if (!staffList.length){ box.innerHTML = '<p class="staff-meta">スタッフがまだいません。</p>'; return; }
+
+  const allowed = assignableRoles();
+  box.innerHTML = "";
+  staffList.forEach(p => {
+    const row = document.createElement("div"); row.className = "staff-row";
+
+    const main = document.createElement("div"); main.className = "staff-main";
+    const name = document.createElement("div"); name.className = "staff-name";
+    name.textContent = p.full_name || "名無し";
+    const meta = document.createElement("div"); meta.className = "staff-meta";
+    meta.textContent = "番号 " + (p.staff_no || "未設定") + "　" + (p.store || "店舗未設定");
+    main.appendChild(name); main.appendChild(meta);
+    row.appendChild(main);
+
+    const isSelf = CURRENT_USER && p.id === CURRENT_USER.id;
+    // 自分の役割は変えられない（誤って管理者を外す事故ふせぎ）
+    const canEdit = !isSelf && allowed.includes(p.role) || (!isSelf && allowed.length === ALL_ROLES.length);
+
+    if (isSelf){
+      const tag = document.createElement("span"); tag.className = "me-tag";
+      tag.textContent = roleLabel(p.role) + "（あなた）";
+      row.appendChild(tag);
+    } else if (!canEdit){
+      const tag = document.createElement("span"); tag.className = "me-tag";
+      tag.textContent = roleLabel(p.role);
+      row.appendChild(tag);
+    } else {
+      const sel = document.createElement("select");
+      allowed.forEach(r => {
+        const o = document.createElement("option");
+        o.value = r; o.textContent = roleLabel(r);
+        if (r === p.role) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.addEventListener("change", () => onRoleChange(p, sel.value, sel));
+      row.appendChild(sel);
+    }
+
+    box.appendChild(row);
+  });
+}
+
+async function onRoleChange(p, newRole, sel){
+  const prev = p.role;
+  if (newRole === prev) return;
+  sel.disabled = true;
+  try{
+    const { error } = await supa.from("profiles").update({ role: newRole }).eq("id", p.id);
+    if (error) throw error;
+    p.role = newRole;
+    toast((p.full_name || "スタッフ") + " を「" + roleLabel(newRole) + "」にしました");
+  }catch(e){
+    console.error(e);
+    sel.value = prev;   // 失敗したら元に戻す
+    toast("変更できませんでした");
+  }finally{
+    sel.disabled = false;
+  }
 }
 
 /* ===================== アプリ本体の起動 ===================== */
@@ -626,6 +746,12 @@ async function bootApp(){
 
   try{ reports = await DB.list(); }catch(e){ console.error(e); reports = []; }
   renderList();
+
+  // 管理者・店長ならスタッフ管理パネルを表示
+  if (canManageRoles()){
+    await loadStaff();
+    renderStaffPanel();
+  }
 }
 
 /* ===================== 起動 ===================== */

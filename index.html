@@ -111,6 +111,15 @@
   .list-head h2{ margin:0; font-size:15px; font-weight:800; }
   .list-head span{ font-size:12.5px; color:var(--ink2); font-weight:600; }
 
+  /* ---------- しぼり込み（検索・店舗） ---------- */
+  .filters{ padding:2px 4px 8px; }
+  #search{ margin-bottom:9px; }
+  .store-filter{ display:flex; gap:6px; flex-wrap:wrap; }
+  .chip{ border:1.5px solid var(--line); background:#fff; color:var(--ink2); font-size:12.5px; font-weight:700;
+    border-radius:999px; padding:7px 13px; cursor:pointer; font-family:inherit; transition:all .12s ease; }
+  .chip:active{ transform:scale(.97); }
+  .chip.on{ color:#fff; border-color:transparent; }
+
   .item{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:13px 14px 12px;
     margin-bottom:9px; box-shadow:inset 4px 0 0 #ccc; }
   .item-top{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
@@ -144,8 +153,7 @@
       <h1><span class="cafe">Cafe</span><span class="more">MORE<i></i></span></h1>
       <span class="sub">日報</span>
     </div>
-    <div class="head-row">
-      <span class="tagline">シフトの報告を、3店舗ぶんここに集約</span>
+    <div class="head-row" style="justify-content:flex-end;">
       <span id="mode" class="mode demo"><span class="dot" style="background:#E7C98A"></span>デモ表示</span>
     </div>
   </header>
@@ -187,6 +195,13 @@
       <h2>みんなの日報</h2>
       <span id="count"></span>
     </div>
+
+    <!-- 検索（名前・本文）と店舗のしぼり込み -->
+    <div class="filters">
+      <input type="text" id="search" placeholder="名前や本文で検索" autocomplete="off" />
+      <div class="store-filter" id="storeFilter" role="group" aria-label="店舗でしぼり込み"></div>
+    </div>
+
     <section id="list" aria-live="polite"></section>
   </main>
 </div>
@@ -196,8 +211,8 @@
 <script>
 /* ===================== CONFIG ===================== */
 /* デプロイ時にここを埋めると本物のDB(Supabase)に保存されます */
-const SUPABASE_URL = "";       // 例: https://xxxx.supabase.co
-const SUPABASE_ANON_KEY = "";  // 例: eyJhbGciOi...
+const SUPABASE_URL = "https://vulardtkhmqdmvavkalm.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_j6cnvki335TBi_2xSkNHUA_Ue6Qct2P";
 
 const STORES = [
   { name: "渋谷店", color: "#C2703D" },
@@ -289,6 +304,8 @@ async function initDB(){
 const $ = (id) => document.getElementById(id);
 let reports = [];
 let selectedStore = STORES[0].name;
+let selectedFilterStore = "all";  // 一覧のしぼり込み（"all"=全店）
+let searchText = "";              // 検索キーワード
 
 function renderStoreSeg(){
   const seg = $("storeSeg");
@@ -308,6 +325,28 @@ function renderStoreSeg(){
   });
 }
 
+function renderStoreFilter(){
+  const box = $("storeFilter");
+  box.innerHTML = "";
+  const opts = [
+    { name:"全店", value:"all", color:"#2A211B" },
+    ...STORES.map(s => ({ name:s.name, value:s.name, color:s.color })),
+  ];
+  opts.forEach(o => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "chip"; b.textContent = o.name;
+    const apply = () => {
+      selectedFilterStore = o.value;
+      [...box.children].forEach(c => { c.classList.remove("on"); c.style.background = ""; });
+      b.classList.add("on"); b.style.background = o.color;
+      renderList();
+    };
+    b.addEventListener("click", apply);
+    box.appendChild(b);
+    if (o.value === selectedFilterStore){ b.classList.add("on"); b.style.background = o.color; }
+  });
+}
+
 function renderMode(){
   const el = $("mode");
   if (MODE === "live"){ el.className = "mode live"; el.innerHTML = '<span class="dot" style="background:#7FD3A1"></span>DB接続'; }
@@ -316,14 +355,23 @@ function renderMode(){
 
 function renderList(){
   const list = $("list");
-  $("count").textContent = reports.length ? `${reports.length}件` : "";
-  if (!reports.length){
-    list.innerHTML =
-      '<div class="empty"><div class="em-ic">📋</div>' +
-      '<h3>まだ日報がありません</h3><p>上のフォームから最初の1件を投稿してみましょう。</p></div>';
+
+  // しぼり込み：店舗 → 検索キーワード（名前・本文）の順にふるい分け
+  let shown = reports;
+  if (selectedFilterStore !== "all") shown = shown.filter(r => r.store === selectedFilterStore);
+  const q = searchText.trim().toLowerCase();
+  if (q) shown = shown.filter(r => (r.author + " " + r.body).toLowerCase().includes(q));
+
+  $("count").textContent = shown.length ? `${shown.length}件` : "";
+
+  if (!shown.length){
+    const msg = reports.length
+      ? '<h3>該当する日報がありません</h3><p>検索や店舗のしぼり込みを変えてみてください。</p>'
+      : '<h3>まだ日報がありません</h3><p>上のフォームから最初の1件を投稿してみましょう。</p>';
+    list.innerHTML = '<div class="empty"><div class="em-ic">📋</div>' + msg + '</div>';
     return;
   }
-  list.innerHTML = reports.map(r => {
+  list.innerHTML = shown.map(r => {
     const c = storeColor(r.store);
     return (
       '<article class="item" style="box-shadow:inset 4px 0 0 ' + c + '">' +
@@ -380,6 +428,8 @@ async function onSubmit(){
 (async function init(){
   $("date").value = todayStr();
   renderStoreSeg();
+  renderStoreFilter();
+  $("search").addEventListener("input", (e) => { searchText = e.target.value; renderList(); });
   $("submit").addEventListener("click", onSubmit);
   // 本文でEnterは改行のまま。名前欄でEnter→投稿
   $("author").addEventListener("keydown", (e) => { if (e.key === "Enter"){ e.preventDefault(); onSubmit(); } });

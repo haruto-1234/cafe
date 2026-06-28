@@ -110,6 +110,21 @@ export default function Login({ onLoggedIn }) {
         >
           {busy ? "処理中…" : "ログイン"}
         </button>
+
+        <a
+          href="/kiosk"
+          style={{
+            display: "block",
+            textAlign: "center",
+            marginTop: 16,
+            fontSize: 13,
+            fontWeight: 700,
+            color: "var(--ink2)",
+            textDecoration: "none",
+          }}
+        >
+          📟 打刻はこちら（共有タブレット用）
+        </a>
       </div>
     </div>
   );

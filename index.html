@@ -863,6 +863,12 @@ async function onAuthSubmit(){
     await refreshSession();
     if (!CURRENT_USER){ showAuthError("ログインできませんでした。"); return; }
     await loadProfile();
+    // 退職（無効化）されたアカウントははじく
+    if (CURRENT_PROFILE && CURRENT_PROFILE.active === false){
+      await supa.auth.signOut(); CURRENT_USER = null; CURRENT_PROFILE = null;
+      showAuthError("このアカウントは無効です。管理者にお問い合わせください。");
+      return;
+    }
     showAuth(false);
     renderUserBar();
     await bootApp();
@@ -985,9 +991,12 @@ function renderStaffPanel(){
   staffList.forEach(p => {
     const row = document.createElement("div"); row.className = "staff-row";
 
+    const inactive = (p.active === false);
+    if (inactive) row.style.opacity = ".55";
+
     const main = document.createElement("div"); main.className = "staff-main";
     const name = document.createElement("div"); name.className = "staff-name";
-    name.textContent = p.full_name || "名無し";
+    name.textContent = (p.full_name || "名無し") + (inactive ? "（退職）" : "");
     const meta = document.createElement("div"); meta.className = "staff-meta";
     meta.textContent = "番号 " + (p.staff_no || "未設定") + "　" + (p.store || "店舗未設定");
     main.appendChild(name); main.appendChild(meta);
@@ -1017,8 +1026,35 @@ function renderStaffPanel(){
       row.appendChild(sel);
     }
 
+    // 退職／復帰ボタン（自分以外で、自分が管理できる相手にだけ）
+    if (!isSelf && canEdit){
+      const tg = document.createElement("button");
+      tg.type = "button"; tg.className = "act-btn" + (inactive ? " primary" : " danger");
+      tg.textContent = inactive ? "復帰" : "退職";
+      tg.addEventListener("click", () => onToggleActive(p, tg));
+      row.appendChild(tg);
+    }
+
     box.appendChild(row);
   });
+}
+
+async function onToggleActive(p, btn){
+  const toInactive = (p.active !== false);   // いま在籍中なら→退職へ
+  const msg = toInactive
+    ? (p.full_name || "このスタッフ") + " を退職（無効化）します。ログインできなくなります。よろしいですか？"
+    : (p.full_name || "このスタッフ") + " を復帰させます。よろしいですか？";
+  if (!confirm(msg)) return;
+  btn.disabled = true;
+  try{
+    const { error } = await supa.from("profiles").update({ active: !toInactive }).eq("id", p.id);
+    if (error) throw error;
+    p.active = !toInactive;
+    renderStaffPanel();
+    toast(toInactive ? "退職にしました" : "復帰しました");
+  }catch(e){
+    console.error(e); toast("変更できませんでした"); btn.disabled = false;
+  }
 }
 
 async function onRoleChange(p, newRole, sel){

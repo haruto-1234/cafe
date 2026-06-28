@@ -309,11 +309,21 @@ const STORES = [
 ];
 const storeColor = (n) => (STORES.find(s => s.name === n) || {}).color || "#999";
 
-/* NGワード（不適切な言葉）。ここに足したり消したりできます */
-const NG_WORDS = ["死ね","殺す","ばか","あほ","きもい","うざい","ぶす","クズ","カス"];
+/* NGワード（不適切な言葉）。ここに足したり消したりできます（漢字・ひらがな両方入れると安心） */
+const NG_WORDS = [
+  "死ね","しね","殺す","ころす","殺せ","ころせ",
+  "ばか","馬鹿","あほ","アホ","きもい","気持ち悪い",
+  "うざい","ぶす","クズ","くず","カス","かす","ボケ","ぼけ"
+];
+/* 文字をそろえる：小文字化・空白除去・カタカナ→ひらがな（表記ゆれ対策） */
+function normalizeForNg(s){
+  return String(s).toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
+}
 function findNgWord(text){
-  const t = String(text).toLowerCase();
-  for (const w of NG_WORDS){ if (t.includes(w.toLowerCase())) return w; }
+  const t = normalizeForNg(text);
+  for (const w of NG_WORDS){ if (t.includes(normalizeForNg(w))) return w; }
   return null;
 }
 

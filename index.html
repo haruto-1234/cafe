@@ -128,6 +128,16 @@
   .when{ font-size:11.5px; color:var(--ink3); margin-left:auto; }
   .body{ margin:0; font-size:14px; line-height:1.7; color:#3A2E22; white-space:pre-wrap; word-break:break-word; }
 
+  .item-actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:10px; }
+  .act-btn{ font-size:12px; font-weight:700; color:var(--ink2); background:#fff; border:1.5px solid var(--line);
+    border-radius:9px; padding:7px 13px; cursor:pointer; font-family:inherit; transition:all .12s ease; }
+  .act-btn:hover{ border-color:var(--ink3); }
+  .act-btn:disabled{ opacity:.5; cursor:default; }
+  .act-btn.primary{ background:var(--crema); color:#3A2C16; border-color:var(--crema); }
+  .act-btn.danger{ color:var(--warn); }
+  .act-btn.danger:hover{ background:#FCEBE0; border-color:#F3D3BF; }
+  .edit-area{ width:100%; margin-top:4px; }
+
   .empty{ text-align:center; color:var(--ink2); padding:40px 24px; }
   .empty .em-ic{ width:66px; height:66px; border-radius:50%; background:#fff; border:1px solid var(--line);
     display:grid; place-items:center; margin:0 auto 14px; font-size:28px; }
@@ -330,7 +340,7 @@ function loadScript(src){
 }
 
 function makeSupabaseDB(client){
-  const map = (r) => ({ id:r.id, date:r.report_date, store:r.store, author:r.author, body:r.body, createdAt:r.created_at });
+  const map = (r) => ({ id:r.id, date:r.report_date, store:r.store, author:r.author, body:r.body, createdAt:r.created_at, userId:r.user_id });
   return {
     async list(){
       const { data, error } = await client.from("reports").select("*").order("created_at", { ascending:false });
@@ -344,6 +354,16 @@ function makeSupabaseDB(client){
         .select().single();
       if (error) throw error;
       return map(data);
+    },
+    async update(id, patch){
+      const { data, error } = await client.from("reports")
+        .update({ body:patch.body }).eq("id", id).select().single();
+      if (error) throw error;
+      return map(data);
+    },
+    async remove(id){
+      const { error } = await client.from("reports").delete().eq("id", id);
+      if (error) throw error;
     },
   };
 }
@@ -365,6 +385,14 @@ function makeLocalDB(){
     async add(r){
       const row = { ...r, id:"local-" + Date.now() + "-" + Math.random().toString(36).slice(2,6), createdAt:new Date().toISOString() };
       const a = await readAll(); a.push(row); await writeAll(a); return row;
+    },
+    async update(id, patch){
+      const a = await readAll(); const i = a.findIndex(x => x.id === id);
+      if (i >= 0){ a[i] = { ...a[i], body:patch.body }; await writeAll(a); return a[i]; }
+      throw new Error("not found");
+    },
+    async remove(id){
+      const a = await readAll(); await writeAll(a.filter(x => x.id !== id));
     },
   };
 }
@@ -390,6 +418,21 @@ let reports = [];
 let selectedStore = STORES[0].name;
 let selectedFilterStore = "all";  // 一覧のしぼり込み（"all"=全店）
 let searchText = "";              // 検索キーワード
+let editingId = null;             // いま編集中の日報ID（なければ null）
+
+/* この日報を編集できるか：自分の投稿だけ */
+function canEditReport(r){
+  return MODE === "live" && CURRENT_USER && r.userId && r.userId === CURRENT_USER.id;
+}
+/* この日報を削除できるか：自分=OK / 管理者・店長=全店 / 正社員・リーダー=自店 / パート=他人不可 */
+function canDeleteReport(r){
+  if (MODE !== "live" || !CURRENT_PROFILE || !CURRENT_USER) return false;
+  if (r.userId && r.userId === CURRENT_USER.id) return true;
+  const role = CURRENT_PROFILE.role;
+  if (role === "admin" || role === "manager") return true;
+  if (role === "fulltime" || role === "leader") return r.store === CURRENT_PROFILE.store;
+  return false;
+}
 
 function renderStoreSeg(){
   const seg = $("storeSeg");
@@ -457,6 +500,23 @@ function renderList(){
   }
   list.innerHTML = shown.map(r => {
     const c = storeColor(r.store);
+    let inner;
+    if (r.id === editingId){
+      // 編集中：本文を入力欄にして保存／キャンセル
+      inner =
+        '<textarea id="editArea" class="edit-area" rows="4" maxlength="2000">' + esc(r.body) + '</textarea>' +
+        '<div class="item-actions">' +
+          '<button class="act-btn primary" data-act="save" data-id="' + r.id + '">保存</button>' +
+          '<button class="act-btn" data-act="cancel" data-id="' + r.id + '">キャンセル</button>' +
+        '</div>';
+    } else {
+      let actions = '';
+      if (canEditReport(r))   actions += '<button class="act-btn" data-act="edit" data-id="' + r.id + '">編集</button>';
+      if (canDeleteReport(r)) actions += '<button class="act-btn danger" data-act="del" data-id="' + r.id + '">削除</button>';
+      inner =
+        '<p class="body">' + esc(r.body) + '</p>' +
+        (actions ? '<div class="item-actions">' + actions + '</div>' : '');
+    }
     return (
       '<article class="item" style="box-shadow:inset 4px 0 0 ' + c + '">' +
         '<div class="item-top">' +
@@ -464,10 +524,49 @@ function renderList(){
           '<span class="author">' + esc(r.author) + '</span>' +
           '<span class="when">' + esc(fmtDate(r.date)) + ' ' + fmtTime(r.createdAt) + '</span>' +
         '</div>' +
-        '<p class="body">' + esc(r.body) + '</p>' +
+        inner +
       '</article>'
     );
   }).join("");
+}
+
+/* 一覧内の「編集・削除・保存・キャンセル」ボタンの処理（まとめて受け取る） */
+async function onListClick(e){
+  const btn = e.target.closest("button[data-act]");
+  if (!btn) return;
+  const id = btn.dataset.id;
+  const act = btn.dataset.act;
+
+  if (act === "edit"){ editingId = id; renderList(); return; }
+  if (act === "cancel"){ editingId = null; renderList(); return; }
+
+  if (act === "save"){
+    const val = ($("editArea").value || "").trim();
+    if (!val){ toast("本文を入力してください"); return; }
+    btn.disabled = true;
+    try{
+      const updated = await DB.update(id, { body: val });
+      const i = reports.findIndex(x => x.id === id);
+      if (i >= 0) reports[i] = updated;
+      editingId = null;
+      renderList();
+      toast("日報を更新しました");
+    }catch(err){ console.error(err); toast("更新できませんでした"); btn.disabled = false; }
+    return;
+  }
+
+  if (act === "del"){
+    if (!confirm("この日報を削除します。よろしいですか？")) return;
+    btn.disabled = true;
+    try{
+      await DB.remove(id);
+      reports = reports.filter(x => x.id !== id);
+      if (editingId === id) editingId = null;
+      renderList();
+      toast("削除しました");
+    }catch(err){ console.error(err); toast("削除できませんでした"); btn.disabled = false; }
+    return;
+  }
 }
 
 function showError(msg){ const e = $("error"); e.textContent = msg; e.classList.add("show"); }
@@ -741,6 +840,7 @@ async function bootApp(){
 
   $("search").addEventListener("input", (e) => { searchText = e.target.value; renderList(); });
   $("submit").addEventListener("click", onSubmit);
+  $("list").addEventListener("click", onListClick);   // 編集・削除ボタン
   // 本文でEnterは改行のまま。名前欄でEnter→投稿
   $("author").addEventListener("keydown", (e) => { if (e.key === "Enter"){ e.preventDefault(); onSubmit(); } });
 

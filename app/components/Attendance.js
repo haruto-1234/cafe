@@ -3,6 +3,9 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { fmtTime, todayStr } from "@/lib/format";
+import { localDateStr, fmtDur, computeWork } from "@/lib/attendance";
+import { canManageRoles } from "@/lib/permissions";
+import AttendanceAdmin from "./AttendanceAdmin";
 
 const PUNCH_LABELS = {
   in: "出勤",
@@ -10,54 +13,6 @@ const PUNCH_LABELS = {
   break_end: "休憩終了",
   out: "退勤",
 };
-
-// ISO日時 → ローカルの "YYYY-MM-DD"
-function localDateStr(iso) {
-  const d = new Date(iso);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-// ミリ秒 → "○時間○分"
-function fmtDur(ms) {
-  if (ms < 0) ms = 0;
-  const m = Math.floor(ms / 60000);
-  return Math.floor(m / 60) + "時間" + (m % 60) + "分";
-}
-
-// 打刻イベント（古い順）から、働いた時間と休憩時間を合算する
-function computeWork(events) {
-  let worked = 0,
-    brk = 0,
-    workSince = null,
-    breakSince = null;
-  for (const r of events) {
-    const t = new Date(r.created_at).getTime();
-    if (r.type === "in") workSince = t;
-    else if (r.type === "break_start") {
-      if (workSince != null) {
-        worked += t - workSince;
-        workSince = null;
-      }
-      breakSince = t;
-    } else if (r.type === "break_end") {
-      if (breakSince != null) {
-        brk += t - breakSince;
-        breakSince = null;
-      }
-      workSince = t;
-    } else if (r.type === "out") {
-      if (workSince != null) {
-        worked += t - workSince;
-        workSince = null;
-      }
-    }
-  }
-  const now = Date.now();
-  if (workSince != null) worked += now - workSince; // 勤務中
-  if (breakSince != null) brk += now - breakSince; // 休憩中
-  return { worked, brk };
-}
 
 export default function Attendance({ profile }) {
   const [today, setToday] = useState([]); // 今日の打刻（古い順）
@@ -150,7 +105,9 @@ export default function Attendance({ profile }) {
             <button
               key={b.type}
               type="button"
-              className={"att-btn" + (ok ? " ready" : "") + (b.danger ? " danger" : "")}
+              className={
+                "att-btn" + (ok ? " ready" : "") + (b.danger ? " danger" : "")
+              }
               disabled={!ok || busy}
               onClick={() => punch(b.type)}
             >
@@ -181,6 +138,9 @@ export default function Attendance({ profile }) {
           </div>
         ))
       )}
+
+      {/* 店長以上には「全員の勤怠」を表示 */}
+      {canManageRoles(profile) && <AttendanceAdmin />}
     </div>
   );
 }

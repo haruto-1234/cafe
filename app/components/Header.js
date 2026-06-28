@@ -2,7 +2,7 @@
 // ログイン中は名前・役割・ログアウトボタンも表示する。
 import { roleLabel } from "@/lib/constants";
 
-export default function Header({ profile, onLogout }) {
+export default function Header({ profile, onLogout, onPwChange }) {
   return (
     <header>
       <div className="brand">
@@ -25,6 +25,9 @@ export default function Header({ profile, onLogout }) {
             <span className="who-role">{roleLabel(profile.role)}</span>
           </span>
           <span style={{ display: "flex", gap: 6 }}>
+            <button type="button" className="logout" onClick={onPwChange}>
+              パスワード変更
+            </button>
             <button type="button" className="logout" onClick={onLogout}>
               ログアウト
             </button>

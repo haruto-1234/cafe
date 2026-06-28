@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import ReportForm from "./ReportForm";
 import ReportList from "./ReportList";
+import StaffPanel from "./StaffPanel";
 
-// 「投稿フォーム」と「一覧」をまとめ、日報データ(reports)をここで管理する。
+// 「投稿フォーム」「スタッフ管理」「一覧」をまとめ、日報データ(reports)をここで管理する。
 export default function ReportsView({ profile }) {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -23,14 +24,24 @@ export default function ReportsView({ profile }) {
     load();
   }, []);
 
-  // 投稿成功 → 一覧の先頭に追加（すぐ画面に出る）
+  // 投稿成功 → 一覧の先頭に追加
   function addReport(r) {
     setReports((prev) => [r, ...prev]);
+  }
+  // 編集成功 → その1件を差し替え
+  function updateReport(r) {
+    setReports((prev) => prev.map((x) => (x.id === r.id ? r : x)));
+  }
+  // 削除成功 → その1件を取り除く
+  function removeReport(id) {
+    setReports((prev) => prev.filter((x) => x.id !== id));
   }
 
   return (
     <div>
       <ReportForm profile={profile} onPosted={addReport} />
+
+      <StaffPanel profile={profile} />
 
       <div className="list-head">
         <h2>みんなの日報</h2>
@@ -40,7 +51,12 @@ export default function ReportsView({ profile }) {
       {loading ? (
         <p style={{ padding: 16, color: "#7A6B5C" }}>読み込み中…</p>
       ) : (
-        <ReportList reports={reports} />
+        <ReportList
+          reports={reports}
+          profile={profile}
+          onUpdated={updateReport}
+          onDeleted={removeReport}
+        />
       )}
     </div>
   );

@@ -2,28 +2,35 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { localDateStr, computeWork, fmtDur } from "@/lib/attendance";
+import {
+  localDateStr,
+  computeWork,
+  fmtDur,
+  workIntervals,
+  nightMs,
+} from "@/lib/attendance";
 
 const pad = (n) => String(n).padStart(2, "0");
+const EIGHT_H = 8 * 3600000;
 
 // CSVのセルを安全に（カンマや改行を含む場合はクォート）
 function csvCell(s) {
   const v = String(s ?? "");
   return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
 }
+const mins = (ms) => Math.floor(ms / 60000);
+const hm = (ms) => `${Math.floor(mins(ms) / 60)}:${pad(mins(ms) % 60)}`;
 
 export default function MonthlyReport() {
   const [month, setMonth] = useState(""); // "YYYY-MM"
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // 初期値：今月（マウント後にセット）
   useEffect(() => {
     const d = new Date();
     setMonth(`${d.getFullYear()}-${pad(d.getMonth() + 1)}`);
   }, []);
 
-  // 月が変わるたびに集計
   useEffect(() => {
     if (!month) return;
     let cancelled = false;
@@ -63,15 +70,19 @@ export default function MonthlyReport() {
 
       const result = Object.keys(byUser).map((id) => {
         let totalMs = 0;
+        let overtimeMs = 0;
+        let nightTotal = 0;
         let days = 0;
         Object.values(byUser[id]).forEach((events) => {
           const { worked } = computeWork(events);
           if (worked > 0) {
             totalMs += worked;
             days += 1;
+            if (worked > EIGHT_H) overtimeMs += worked - EIGHT_H; // 1日8時間超
+            nightTotal += nightMs(workIntervals(events)); // 22時〜翌5時
           }
         });
-        return { id, name: nameOf(id), days, totalMs };
+        return { id, name: nameOf(id), days, totalMs, overtimeMs, nightTotal };
       });
       result.sort((a, b) => a.name.localeCompare(b.name, "ja"));
       setRows(result);
@@ -84,14 +95,31 @@ export default function MonthlyReport() {
   }, [month]);
 
   function downloadCsv() {
-    const header = ["名前", "出勤日数", "合計勤務時間", "合計分"];
+    const header = [
+      "名前",
+      "出勤日数",
+      "合計勤務時間",
+      "うち残業",
+      "うち深夜",
+      "合計分",
+      "残業分",
+      "深夜分",
+    ];
     const lines = [header.join(",")];
     rows.forEach((r) => {
-      const mins = Math.floor(r.totalMs / 60000);
-      const hm = `${Math.floor(mins / 60)}:${pad(mins % 60)}`;
-      lines.push([csvCell(r.name), r.days, hm, mins].join(","));
+      lines.push(
+        [
+          csvCell(r.name),
+          r.days,
+          hm(r.totalMs),
+          hm(r.overtimeMs),
+          hm(r.nightTotal),
+          mins(r.totalMs),
+          mins(r.overtimeMs),
+          mins(r.nightTotal),
+        ].join(",")
+      );
     });
-    // 先頭のBOMでExcelが日本語を正しく開ける
     const csv = "﻿" + lines.join("\r\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -142,11 +170,18 @@ export default function MonthlyReport() {
             <div className="att-log" key={r.id}>
               <div className="staff-main">
                 <div className="staff-name">{r.name}</div>
-                <div className="staff-meta">{r.days}日出勤</div>
+                <div className="staff-meta">
+                  {r.days}日出勤
+                  {r.overtimeMs > 0 ? `　残業 ${fmtDur(r.overtimeMs)}` : ""}
+                  {r.nightTotal > 0 ? `　深夜 ${fmtDur(r.nightTotal)}` : ""}
+                </div>
               </div>
               <span className="lbl">{fmtDur(r.totalMs)}</span>
             </div>
           ))}
+          <p style={{ fontSize: 11.5, color: "var(--ink3)", padding: "8px 4px" }}>
+            ※ 残業＝1日8時間超ぶん／深夜＝22:00〜翌5:00ぶん（簡易計算）。実際の支給は就業規則に合わせて調整してください。
+          </p>
         </>
       )}
     </div>

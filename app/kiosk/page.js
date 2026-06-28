@@ -306,7 +306,7 @@ export default function KioskPage() {
                   }
                   disabled={!ok || busy}
                   onClick={() => punch(b.type)}
-                  style={{ padding: "16px 2px", fontSize: 13.5 }}
+                  style={{ padding: "30px 2px", fontSize: 16, fontWeight: 800 }}
                 >
                   {b.label}
                 </button>

@@ -190,6 +190,11 @@ export default function AttendanceAdmin() {
                   <div className="staff-name">{nameOf(id)}</div>
                   <div className="staff-meta">
                     {inT} 〜 {outT}　{fmtDur(s.worked)}
+                    {!s.lastOut && (
+                      <span style={{ color: "var(--warn)", fontWeight: 700 }}>
+                        　⚠️退勤なし
+                      </span>
+                    )}
                   </div>
                 </div>
                 <button

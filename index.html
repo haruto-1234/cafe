@@ -151,6 +151,9 @@
   .act-btn.danger{ color:var(--warn); }
   .act-btn.danger:hover{ background:#FCEBE0; border-color:#F3D3BF; }
   .edit-area{ width:100%; margin-top:4px; }
+  .edit-fields{ display:flex; gap:8px; margin-bottom:8px; }
+  .edit-fields input[type=date], .edit-fields select{ flex:1; border:1.5px solid var(--line); border-radius:9px;
+    padding:9px 10px; font-size:13.5px; font-family:inherit; background:#fff; color:var(--ink); }
 
   .empty{ text-align:center; color:var(--ink2); padding:40px 24px; }
   .empty .em-ic{ width:66px; height:66px; border-radius:50%; background:#fff; border:1px solid var(--line);
@@ -416,8 +419,12 @@ function makeSupabaseDB(client){
       return map(data);
     },
     async update(id, patch){
+      const upd = {};
+      if (patch.body  !== undefined) upd.body = patch.body;
+      if (patch.date  !== undefined) upd.report_date = patch.date;
+      if (patch.store !== undefined) upd.store = patch.store;
       const { data, error } = await client.from("reports")
-        .update({ body:patch.body }).eq("id", id).select().single();
+        .update(upd).eq("id", id).select().single();
       if (error) throw error;
       return map(data);
     },
@@ -448,7 +455,12 @@ function makeLocalDB(){
     },
     async update(id, patch){
       const a = await readAll(); const i = a.findIndex(x => x.id === id);
-      if (i >= 0){ a[i] = { ...a[i], body:patch.body }; await writeAll(a); return a[i]; }
+      if (i >= 0){
+        if (patch.body  !== undefined) a[i].body  = patch.body;
+        if (patch.date  !== undefined) a[i].date  = patch.date;
+        if (patch.store !== undefined) a[i].store = patch.store;
+        await writeAll(a); return a[i];
+      }
       throw new Error("not found");
     },
     async remove(id){
@@ -611,8 +623,13 @@ function renderList(){
     const c = storeColor(r.store);
     let inner;
     if (r.id === editingId){
-      // 編集中：本文を入力欄にして保存／キャンセル
+      // 編集中：日付・店舗・本文を入力欄にして保存／キャンセル
+      const opts = STORES.map(s => '<option value="' + esc(s.name) + '"' + (s.name === r.store ? ' selected' : '') + '>' + esc(s.name) + '</option>').join('');
       inner =
+        '<div class="edit-fields">' +
+          '<input type="date" id="editDate" value="' + esc(r.date) + '">' +
+          '<select id="editStore">' + opts + '</select>' +
+        '</div>' +
         '<textarea id="editArea" class="edit-area" rows="4" maxlength="2000">' + esc(r.body) + '</textarea>' +
         '<div class="item-actions">' +
           '<button class="act-btn primary" data-act="save" data-id="' + r.id + '">保存</button>' +
@@ -660,9 +677,13 @@ async function onListClick(e){
   if (act === "save"){
     const val = ($("editArea").value || "").trim();
     if (!val){ toast("本文を入力してください"); return; }
+    const ng = findNgWord(val);
+    if (ng){ toast("不適切な言葉が含まれています（「" + ng + "」）"); return; }
+    const date = $("editDate").value || todayStr();
+    const store = $("editStore").value;
     btn.disabled = true;
     try{
-      const updated = await DB.update(id, { body: val });
+      const updated = await DB.update(id, { body: val, date, store });
       const i = reports.findIndex(x => x.id === id);
       if (i >= 0) reports[i] = updated;
       editingId = null;
@@ -674,9 +695,15 @@ async function onListClick(e){
 
   if (act === "del"){
     if (!confirm("この日報を削除します。よろしいですか？")) return;
+    const rep = reports.find(x => x.id === id);
     btn.disabled = true;
     try{
       await DB.remove(id);
+      // 写真も保管庫から消す（パス形式のものだけ）
+      if (MODE === "live" && supa && rep && rep.photos && rep.photos.length){
+        const paths = rep.photos.filter(p => p && !/^https?:\/\//.test(p));
+        if (paths.length){ try{ await supa.storage.from("report-photos").remove(paths); }catch(err){ console.error(err); } }
+      }
       reports = reports.filter(x => x.id !== id);
       if (editingId === id) editingId = null;
       renderList();

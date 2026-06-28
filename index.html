@@ -68,8 +68,29 @@
   .mode.demo{ background:#4A3D2E; color:#E7C98A; }
   .mode.live{ background:#1F3A2C; color:#7FD3A1; }
 
-  /* ---------- 入力フォーム（上） ---------- */
+  /* ---------- タブ（日報 / 勤怠） ---------- */
   main{ padding:14px 14px 0; }
+  .tabbar{ display:flex; gap:8px; margin-bottom:14px; }
+  .tabbtn{ flex:1; padding:12px; border:1.5px solid var(--line); background:#fff; color:var(--ink2);
+    font-size:14px; font-weight:800; border-radius:12px; cursor:pointer; font-family:inherit; transition:all .12s ease; }
+  .tabbtn.on{ background:var(--ink); color:#F4ECDD; border-color:var(--ink); }
+
+  /* ---------- 勤怠（打刻） ---------- */
+  .att-status{ font-size:14.5px; font-weight:800; text-align:center; padding:12px; margin-bottom:14px;
+    border-radius:11px; background:var(--paper); border:1px solid var(--line); }
+  .att-buttons{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .att-btn{ padding:20px 10px; font-size:15.5px; font-weight:800; border-radius:13px; border:1.5px solid var(--line);
+    background:#fff; color:var(--ink3); cursor:pointer; font-family:inherit; transition:all .12s ease; }
+  .att-btn:not(:disabled):active{ transform:scale(.97); }
+  .att-btn:disabled{ opacity:.45; cursor:default; }
+  .att-btn.ready{ background:var(--crema); color:#3A2C16; border-color:var(--crema); box-shadow:0 4px 12px rgba(217,154,62,.32); }
+  .att-btn.ready.danger{ background:#C2410C; color:#fff; border-color:#C2410C; box-shadow:0 4px 12px rgba(194,65,12,.25); }
+  .att-log{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px;
+    margin-bottom:8px; display:flex; align-items:center; gap:12px; }
+  .att-log .t{ font-size:15px; font-weight:800; color:var(--ink); }
+  .att-log .lbl{ font-size:13.5px; color:var(--ink2); font-weight:700; }
+
+  /* ---------- 入力フォーム（上） ---------- */
   .card{ background:var(--card); border:1px solid var(--line); border-radius:16px; }
   .form{ padding:16px 16px 18px; box-shadow:0 6px 20px rgba(42,33,27,.06); }
   .form-title{ display:flex; align-items:center; gap:7px; font-size:14px; font-weight:800; margin:0 0 14px; }
@@ -248,6 +269,12 @@
   </header>
 
   <main>
+    <div class="tabbar">
+      <button type="button" id="tabReports" class="tabbtn on">📋 日報</button>
+      <button type="button" id="tabAttendance" class="tabbtn">⏰ 勤怠</button>
+    </div>
+
+    <div id="viewReports">
     <!-- 上：入力フォーム -->
     <section class="card form" aria-labelledby="formTitle">
       <p class="form-title" id="formTitle"><span class="bar"></span>日報を投稿する</p>
@@ -336,6 +363,24 @@
     </div>
 
     <section id="list" aria-live="polite"></section>
+    </div><!-- /viewReports -->
+
+    <!-- 勤怠ビュー -->
+    <div id="viewAttendance" style="display:none;">
+      <section class="card form">
+        <p class="form-title"><span class="bar"></span>勤怠（打刻）</p>
+        <div class="att-status" id="attStatus">—</div>
+        <div class="att-buttons">
+          <button type="button" class="att-btn" data-punch="in">出勤</button>
+          <button type="button" class="att-btn" data-punch="break_start">休憩開始</button>
+          <button type="button" class="att-btn" data-punch="break_end">休憩終了</button>
+          <button type="button" class="att-btn danger" data-punch="out">退勤</button>
+        </div>
+      </section>
+
+      <div class="list-head"><h2>今日の記録</h2><span id="attSummary"></span></div>
+      <section id="attList" aria-live="polite"></section>
+    </div>
   </main>
 </div>
 
@@ -994,6 +1039,111 @@ async function onRoleChange(p, newRole, sel){
   }
 }
 
+/* ===================== 勤怠（打刻） ===================== */
+const PUNCH_LABELS = { in:"出勤", break_start:"休憩開始", break_end:"休憩終了", out:"退勤" };
+let attToday = [];   // 今日の打刻（古い順）
+
+/* timestamptz を「ローカルの日付文字列」に */
+function localDateStr(iso){ const d = new Date(iso); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
+
+/* タブの切りかえ */
+function switchTab(which){
+  const rep = (which === "reports");
+  $("viewReports").style.display = rep ? "" : "none";
+  $("viewAttendance").style.display = rep ? "none" : "";
+  $("tabReports").classList.toggle("on", rep);
+  $("tabAttendance").classList.toggle("on", !rep);
+  if (!rep){ loadAttendance().then(renderAttendance); }
+}
+
+/* 今日の打刻を読み込む */
+async function loadAttendance(){
+  attToday = [];
+  if (MODE !== "live" || !supa || !CURRENT_USER) return;
+  const { data, error } = await supa.from("attendance")
+    .select("*").eq("user_id", CURRENT_USER.id)
+    .order("created_at", { ascending:false }).limit(50);
+  if (error){ console.error(error); return; }
+  const today = todayStr();
+  attToday = (data || [])
+    .filter(r => localDateStr(r.created_at) === today)
+    .sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
+}
+
+/* いまの状態：none(未出勤)/working(勤務中)/on_break(休憩中)/finished(退勤済) */
+function attState(){
+  if (!attToday.length) return "none";
+  const last = attToday[attToday.length - 1].type;
+  if (last === "out") return "finished";
+  if (last === "break_start") return "on_break";
+  return "working";   // in または break_end
+}
+
+function fmtDur(ms){
+  if (ms < 0) ms = 0;
+  const m = Math.floor(ms / 60000);
+  return Math.floor(m / 60) + "時間" + (m % 60) + "分";
+}
+
+/* 合計勤務・休憩の表示文 */
+function attSummaryText(){
+  const first = attToday.find(r => r.type === "in");
+  if (!first) return "";
+  const lastOut = [...attToday].reverse().find(r => r.type === "out");
+  const endMs = lastOut ? new Date(lastOut.created_at).getTime() : Date.now();
+  let brk = 0, bs = null;
+  for (const r of attToday){
+    const t = new Date(r.created_at).getTime();
+    if (r.type === "break_start") bs = t;
+    else if (r.type === "break_end" && bs != null){ brk += t - bs; bs = null; }
+  }
+  if (bs != null) brk += endMs - bs;   // 休憩中
+  const worked = (endMs - new Date(first.created_at).getTime()) - brk;
+  return "勤務 " + fmtDur(worked) + "（休憩 " + fmtDur(brk) + "）";
+}
+
+function renderAttendance(){
+  const state = attState();
+  const allowed = ({
+    none: ["in"], working: ["break_start","out"], on_break: ["break_end"], finished: [],
+  })[state] || [];
+  const statusText = ({
+    none:"未出勤", working:"勤務中 🟢", on_break:"休憩中 🟡", finished:"退勤済み ✅",
+  })[state];
+  $("attStatus").textContent = "今の状態：" + statusText;
+
+  document.querySelectorAll(".att-btn").forEach(b => {
+    const ok = allowed.includes(b.dataset.punch);
+    b.disabled = !ok;
+    b.classList.toggle("ready", ok);
+  });
+
+  const list = $("attList");
+  if (!attToday.length){
+    list.innerHTML = '<div class="empty"><div class="em-ic">⏰</div><h3>今日の打刻はまだありません</h3><p>「出勤」から始めましょう。</p></div>';
+  } else {
+    list.innerHTML = attToday.map(r =>
+      '<div class="att-log"><span class="t">' + fmtTime(r.created_at) + '</span><span class="lbl">' + PUNCH_LABELS[r.type] + '</span></div>'
+    ).join("");
+  }
+  $("attSummary").textContent = attSummaryText();
+}
+
+async function onPunch(type){
+  if (MODE !== "live" || !supa || !CURRENT_USER){ toast("打刻にはログインが必要です"); return; }
+  document.querySelectorAll(".att-btn").forEach(b => b.disabled = true);
+  try{
+    const store = (CURRENT_PROFILE && CURRENT_PROFILE.store) || null;
+    const { error } = await supa.from("attendance").insert({ user_id:CURRENT_USER.id, type, store });
+    if (error) throw error;
+    await loadAttendance();
+    renderAttendance();
+    toast(PUNCH_LABELS[type] + " を記録しました");
+  }catch(e){
+    console.error(e); toast("記録できませんでした"); renderAttendance();
+  }
+}
+
 /* ===================== アプリ本体の起動 ===================== */
 async function bootApp(){
   if (booted) return; booted = true;
@@ -1018,6 +1168,9 @@ async function bootApp(){
   $("submit").addEventListener("click", onSubmit);
   $("list").addEventListener("click", onListClick);   // 編集・削除ボタン
   $("photoInput").addEventListener("change", onPhotoSelect);   // 写真をえらぶ
+  $("tabReports").addEventListener("click", () => switchTab("reports"));       // タブ
+  $("tabAttendance").addEventListener("click", () => switchTab("attendance"));
+  document.querySelectorAll(".att-btn").forEach(b => b.addEventListener("click", () => onPunch(b.dataset.punch)));
   // 本文でEnterは改行のまま。名前欄でEnter→投稿
   $("author").addEventListener("keydown", (e) => { if (e.key === "Enter"){ e.preventDefault(); onSubmit(); } });
 

@@ -1085,30 +1085,30 @@ function fmtDur(ms){
   return Math.floor(m / 60) + "時間" + (m % 60) + "分";
 }
 
-/* 合計勤務・休憩の表示文 */
+/* 合計勤務・休憩の表示文（働いた区間だけ足す。中抜け＝退勤〜次の出勤は勤務に入れない） */
 function attSummaryText(){
-  const first = attToday.find(r => r.type === "in");
-  if (!first) return "";
-  const lastOut = [...attToday].reverse().find(r => r.type === "out");
-  const endMs = lastOut ? new Date(lastOut.created_at).getTime() : Date.now();
-  let brk = 0, bs = null;
+  if (!attToday.length) return "";
+  let worked = 0, brk = 0, workSince = null, breakSince = null;
   for (const r of attToday){
     const t = new Date(r.created_at).getTime();
-    if (r.type === "break_start") bs = t;
-    else if (r.type === "break_end" && bs != null){ brk += t - bs; bs = null; }
+    if (r.type === "in"){ workSince = t; }
+    else if (r.type === "break_start"){ if (workSince != null){ worked += t - workSince; workSince = null; } breakSince = t; }
+    else if (r.type === "break_end"){ if (breakSince != null){ brk += t - breakSince; breakSince = null; } workSince = t; }
+    else if (r.type === "out"){ if (workSince != null){ worked += t - workSince; workSince = null; } }
   }
-  if (bs != null) brk += endMs - bs;   // 休憩中
-  const worked = (endMs - new Date(first.created_at).getTime()) - brk;
+  const now = Date.now();
+  if (workSince  != null) worked += now - workSince;    // 勤務中
+  if (breakSince != null) brk    += now - breakSince;   // 休憩中
   return "勤務 " + fmtDur(worked) + "（休憩 " + fmtDur(brk) + "）";
 }
 
 function renderAttendance(){
   const state = attState();
   const allowed = ({
-    none: ["in"], working: ["break_start","out"], on_break: ["break_end"], finished: [],
+    none: ["in"], working: ["break_start","out"], on_break: ["break_end"], finished: ["in"],
   })[state] || [];
   const statusText = ({
-    none:"未出勤", working:"勤務中 🟢", on_break:"休憩中 🟡", finished:"退勤済み ✅",
+    none:"未出勤", working:"勤務中 🟢", on_break:"休憩中 🟡", finished:"退勤済み ✅（再出勤できます）",
   })[state];
   $("attStatus").textContent = "今の状態：" + statusText;
 

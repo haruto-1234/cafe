@@ -128,6 +128,20 @@
   .when{ font-size:11.5px; color:var(--ink3); margin-left:auto; }
   .body{ margin:0; font-size:14px; line-height:1.7; color:#3A2E22; white-space:pre-wrap; word-break:break-word; }
 
+  /* ---------- 写真（投稿フォームのプレビュー） ---------- */
+  input[type=file]{ font-size:13px; font-family:inherit; color:var(--ink2); }
+  .photo-previews{ display:flex; flex-wrap:wrap; gap:8px; }
+  .photo-previews:not(:empty){ margin-top:10px; }
+  .thumb{ position:relative; width:72px; height:72px; border-radius:10px; overflow:hidden; border:1px solid var(--line); }
+  .thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .thumb .rm{ position:absolute; top:2px; right:2px; width:20px; height:20px; border:0; border-radius:50%;
+    background:rgba(42,33,27,.78); color:#fff; font-size:13px; line-height:20px; text-align:center; cursor:pointer; padding:0; }
+
+  /* ---------- 写真（一覧での表示） ---------- */
+  .photos{ display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  .photos a{ display:block; width:84px; height:84px; border-radius:9px; overflow:hidden; border:1px solid var(--line); }
+  .photos img{ width:100%; height:100%; object-fit:cover; display:block; }
+
   .item-actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:10px; }
   .act-btn{ font-size:12px; font-weight:700; color:var(--ink2); background:#fff; border:1.5px solid var(--line);
     border-radius:9px; padding:7px 13px; cursor:pointer; font-family:inherit; transition:all .12s ease; }
@@ -267,6 +281,12 @@
           placeholder="混雑状況、品切れ、クレーム、よかったことなど。箇条書きでもOK。"></textarea>
       </div>
 
+      <div class="field">
+        <label for="photoInput">写真 <span style="font-weight:600;color:var(--ink3);font-size:11.5px;">（最大10枚・任意）</span></label>
+        <input type="file" id="photoInput" accept="image/*" multiple />
+        <div class="photo-previews" id="photoPreviews"></div>
+      </div>
+
       <div class="error" id="error" role="alert" aria-live="assertive"></div>
 
       <button class="submit" id="submit" type="button">日報を投稿する</button>
@@ -358,7 +378,7 @@ function loadScript(src){
 }
 
 function makeSupabaseDB(client){
-  const map = (r) => ({ id:r.id, date:r.report_date, store:r.store, author:r.author, body:r.body, createdAt:r.created_at, userId:r.user_id });
+  const map = (r) => ({ id:r.id, date:r.report_date, store:r.store, author:r.author, body:r.body, createdAt:r.created_at, userId:r.user_id, photos:r.photos || [] });
   return {
     async list(){
       const { data, error } = await client.from("reports").select("*").order("created_at", { ascending:false });
@@ -368,7 +388,7 @@ function makeSupabaseDB(client){
     async add(r){
       const { data, error } = await client.from("reports")
         .insert({ report_date:r.date, store:r.store, author:r.author, body:r.body,
-                  user_id: (CURRENT_USER ? CURRENT_USER.id : null) })
+                  user_id: (CURRENT_USER ? CURRENT_USER.id : null), photos: r.photos || [] })
         .select().single();
       if (error) throw error;
       return map(data);
@@ -437,6 +457,55 @@ let selectedStore = STORES[0].name;
 let selectedFilterStore = "all";  // 一覧のしぼり込み（"all"=全店）
 let searchText = "";              // 検索キーワード
 let editingId = null;             // いま編集中の日報ID（なければ null）
+let selectedFiles = [];           // 投稿前にえらんだ写真ファイル
+const MAX_PHOTOS = 10;
+
+/* 保管庫のパスから、表示用の公開URLを作る */
+function photoUrl(path){
+  if (!path) return "";
+  if (/^https?:\/\//.test(path)) return path;         // すでにURLならそのまま（デモ用）
+  if (!supa) return path;
+  return supa.storage.from("report-photos").getPublicUrl(path).data.publicUrl;
+}
+
+/* えらんだ写真のプレビューを描く */
+function renderPhotoPreviews(){
+  const box = $("photoPreviews"); if (!box) return;
+  box.innerHTML = "";
+  selectedFiles.forEach((file, idx) => {
+    const div = document.createElement("div"); div.className = "thumb";
+    const img = document.createElement("img"); img.src = URL.createObjectURL(file); img.alt = "";
+    const rm = document.createElement("button"); rm.type = "button"; rm.className = "rm"; rm.textContent = "×";
+    rm.setAttribute("aria-label", "この写真を外す");
+    rm.addEventListener("click", () => { selectedFiles.splice(idx, 1); renderPhotoPreviews(); });
+    div.appendChild(img); div.appendChild(rm); box.appendChild(div);
+  });
+}
+
+/* ファイルをえらんだとき（10枚まで） */
+function onPhotoSelect(e){
+  const files = [...e.target.files];
+  for (const f of files){
+    if (selectedFiles.length >= MAX_PHOTOS){ toast("写真は最大" + MAX_PHOTOS + "枚までです"); break; }
+    selectedFiles.push(f);
+  }
+  e.target.value = "";   // 同じ写真も選び直せるように
+  renderPhotoPreviews();
+}
+
+/* 写真を保管庫へアップロードして、パスの一覧を返す */
+async function uploadPhotos(){
+  const paths = [];
+  for (let i = 0; i < selectedFiles.length; i++){
+    const f = selectedFiles[i];
+    const ext = (f.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+    const path = CURRENT_USER.id + "/" + Date.now() + "_" + i + "." + ext;
+    const { error } = await supa.storage.from("report-photos").upload(path, f, { upsert:false });
+    if (error) throw error;
+    paths.push(path);
+  }
+  return paths;
+}
 
 /* この日報を編集できるか：自分の投稿だけ */
 function canEditReport(r){
@@ -531,8 +600,16 @@ function renderList(){
       let actions = '';
       if (canEditReport(r))   actions += '<button class="act-btn" data-act="edit" data-id="' + r.id + '">編集</button>';
       if (canDeleteReport(r)) actions += '<button class="act-btn danger" data-act="del" data-id="' + r.id + '">削除</button>';
+      let photosHtml = '';
+      if (r.photos && r.photos.length){
+        photosHtml = '<div class="photos">' + r.photos.map(p => {
+          const u = photoUrl(p);
+          return '<a href="' + u + '" target="_blank" rel="noopener"><img src="' + u + '" alt="写真" loading="lazy"></a>';
+        }).join('') + '</div>';
+      }
       inner =
         '<p class="body">' + esc(r.body) + '</p>' +
+        photosHtml +
         (actions ? '<div class="item-actions">' + actions + '</div>' : '');
     }
     return (
@@ -613,10 +690,16 @@ async function onSubmit(){
   const btn = $("submit");
   btn.disabled = true; btn.textContent = "投稿中…";
   try{
-    const row = await DB.add({ date, store:selectedStore, author, body });
+    let photos = [];
+    if (MODE === "live" && supa && selectedFiles.length){
+      btn.textContent = "写真を送信中…";
+      photos = await uploadPhotos();
+    }
+    const row = await DB.add({ date, store:selectedStore, author, body, photos });
     reports.unshift(row);   // 要件2: 新しい順で先頭に追加 → すぐ一覧が増える
     renderList();
     $("body").value = "";   // 本文だけクリア（名前・店舗・日付は次の投稿用に残す）
+    selectedFiles = []; renderPhotoPreviews();
     $("body").focus();
     toast("日報を投稿しました");
   }catch(e){
@@ -863,6 +946,7 @@ async function bootApp(){
   $("search").addEventListener("input", (e) => { searchText = e.target.value; renderList(); });
   $("submit").addEventListener("click", onSubmit);
   $("list").addEventListener("click", onListClick);   // 編集・削除ボタン
+  $("photoInput").addEventListener("change", onPhotoSelect);   // 写真をえらぶ
   // 本文でEnterは改行のまま。名前欄でEnter→投稿
   $("author").addEventListener("keydown", (e) => { if (e.key === "Enter"){ e.preventDefault(); onSubmit(); } });
 

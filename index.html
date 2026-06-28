@@ -309,6 +309,14 @@ const STORES = [
 ];
 const storeColor = (n) => (STORES.find(s => s.name === n) || {}).color || "#999";
 
+/* NGワード（不適切な言葉）。ここに足したり消したりできます */
+const NG_WORDS = ["死ね","殺す","ばか","あほ","きもい","うざい","ぶす","クズ","カス"];
+function findNgWord(text){
+  const t = String(text).toLowerCase();
+  for (const w of NG_WORDS){ if (t.includes(w.toLowerCase())) return w; }
+  return null;
+}
+
 /* ===================== 日付ユーティリティ ===================== */
 const WEEK = ["日","月","火","水","木","金","土"];
 const pad = (n) => String(n).padStart(2, "0");
@@ -588,6 +596,8 @@ async function onSubmit(){
   if (!author && !body){ showError("名前と本文を入力してください。"); return; }
   if (!author){ showError("名前を入力してください。"); return; }
   if (!body){ showError("本文を入力してください。"); return; }
+  const ng = findNgWord(body);
+  if (ng){ showError("不適切な言葉が含まれています（「" + ng + "」）。表現を直してください。"); return; }
   clearError();
 
   const btn = $("submit");
@@ -601,7 +611,9 @@ async function onSubmit(){
     toast("日報を投稿しました");
   }catch(e){
     console.error(e);
-    showError("保存できませんでした。通信状況や Supabase の設定を確認してください。");
+    const m = (e && e.message) ? e.message : "";
+    if (m.includes("10件")) showError("1日に投稿できる日報は10件までです。明日また投稿してください。");
+    else showError("保存できませんでした。通信状況や Supabase の設定を確認してください。");
   }finally{
     btn.disabled = false; btn.textContent = "日報を投稿する";
   }

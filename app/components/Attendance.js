@@ -8,6 +8,7 @@ import { canManageRoles } from "@/lib/permissions";
 import { toast } from "@/lib/toast";
 import AttendanceAdmin from "./AttendanceAdmin";
 import MonthlyReport from "./MonthlyReport";
+import StoreDashboard from "./StoreDashboard";
 
 const PUNCH_LABELS = {
   in: "出勤",
@@ -145,6 +146,7 @@ export default function Attendance({ profile }) {
       {/* 店長以上には「全員の勤怠」と「月次集計」を表示 */}
       {canManageRoles(profile) && (
         <>
+          <StoreDashboard />
           <AttendanceAdmin />
           <MonthlyReport />
         </>

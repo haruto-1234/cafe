@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { fmtTime, todayStr } from "@/lib/format";
 import { localDateStr, fmtDur, computeWork } from "@/lib/attendance";
 import { canManageRoles } from "@/lib/permissions";
+import { toast } from "@/lib/toast";
 import AttendanceAdmin from "./AttendanceAdmin";
 import MonthlyReport from "./MonthlyReport";
 
@@ -61,6 +62,7 @@ export default function Attendance({ profile }) {
         .insert({ user_id: profile.id, type, store });
       if (error) throw error;
       await load();
+      toast(`${PUNCH_LABELS[type]} を記録しました`);
     } catch (e) {
       console.error(e);
     } finally {

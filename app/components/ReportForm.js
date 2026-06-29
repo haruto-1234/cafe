@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { STORES } from "@/lib/constants";
 import { todayStr } from "@/lib/format";
 import { findNgWord } from "@/lib/ng";
+import { toast } from "@/lib/toast";
 
 const MAX_PHOTOS = 10;
 
@@ -82,6 +83,7 @@ export default function ReportForm({ profile, onPosted }) {
         .single();
       if (error) throw error;
       onPosted(data); // 一覧の先頭に追加してもらう
+      toast("日報を投稿しました");
       setBody(""); // 本文だけ消す（日付・店舗・名前は次の投稿用に残す）
       setFiles([]);
     } catch (e) {

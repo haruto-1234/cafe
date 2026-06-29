@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { toast } from "@/lib/toast";
 
 // ログイン中の自分のパスワードを変更する画面。
 export default function PwChange({ onClose }) {
@@ -20,7 +21,7 @@ export default function PwChange({ onClose }) {
     try {
       const { error } = await supabase.auth.updateUser({ password: a });
       if (error) throw error;
-      alert("パスワードを変更しました");
+      toast("パスワードを変更しました");
       onClose();
     } catch (e) {
       setError("変更できませんでした：" + (e?.message || ""));

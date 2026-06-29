@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase, createTempClient } from "@/lib/supabaseClient";
 import { STORES, roleLabel, toEmail } from "@/lib/constants";
 import { ALL_ROLES, canManageRoles, assignableRoles } from "@/lib/permissions";
+import { toast } from "@/lib/toast";
 
 // スタッフ管理（管理者・店長だけに表示）。
 export default function StaffPanel({ profile }) {
@@ -62,7 +63,7 @@ export default function StaffPanel({ profile }) {
       setName("");
       setPw("");
       await loadStaff();
-      alert(name + " を登録しました");
+      toast(name + " を登録しました");
     } catch (e) {
       setError("登録できませんでした：" + (e?.message || ""));
     } finally {
@@ -93,7 +94,7 @@ export default function StaffPanel({ profile }) {
     setStaff((prev) =>
       prev.map((s) => (s.id === p.id ? { ...s, role: newRole } : s))
     );
-    alert(`${p.full_name || "スタッフ"} を「${roleLabel(newRole)}」にしました`);
+    toast(`${p.full_name || "スタッフ"} を「${roleLabel(newRole)}」にしました`);
   }
 
   async function toggleActive(p) {
@@ -113,7 +114,7 @@ export default function StaffPanel({ profile }) {
     setStaff((prev) =>
       prev.map((s) => (s.id === p.id ? { ...s, active: !toInactive } : s))
     );
-    alert(toInactive ? "退職にしました" : "復帰しました");
+    toast(toInactive ? "退職にしました" : "復帰しました");
   }
 
   return (

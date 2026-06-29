@@ -158,6 +158,23 @@ export default function ReportList({ reports, profile, onUpdated, onDeleted }) {
               <>
                 <p className="body">{r.body}</p>
 
+                {(r.sales != null || r.customers != null) && (
+                  <p
+                    style={{
+                      fontSize: 12.5,
+                      color: "var(--ink2)",
+                      margin: "8px 0 0",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {r.sales != null
+                      ? `💰 売上 ${Number(r.sales).toLocaleString()}円`
+                      : ""}
+                    {r.sales != null && r.customers != null ? "　" : ""}
+                    {r.customers != null ? `👥 客数 ${r.customers}` : ""}
+                  </p>
+                )}
+
                 {r.photos && r.photos.length > 0 && (
                   <div className="photos">
                     {r.photos.map((p, i) => {

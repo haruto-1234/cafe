@@ -37,7 +37,7 @@ export default function StoreDashboard() {
         supabase.from("profiles").select("id, store"),
         supabase
           .from("reports")
-          .select("store, report_date")
+          .select("store, report_date, sales")
           .gte("report_date", `${month}-01`)
           .lte("report_date", `${month}-31`),
       ]);
@@ -71,11 +71,18 @@ export default function StoreDashboard() {
         }
       });
 
-      // 日報数：店舗 → 件数
+      // 日報数・売上：店舗 → 集計
       const repCount = {};
-      STORES.forEach((s) => (repCount[s.name] = 0));
+      const salesSum = {};
+      STORES.forEach((s) => {
+        repCount[s.name] = 0;
+        salesSum[s.name] = 0;
+      });
       (reps || []).forEach((r) => {
-        if (repCount[r.store] != null) repCount[r.store] += 1;
+        if (repCount[r.store] != null) {
+          repCount[r.store] += 1;
+          salesSum[r.store] += Number(r.sales) || 0;
+        }
       });
 
       setData(
@@ -85,6 +92,7 @@ export default function StoreDashboard() {
           ms: acc[s.name].ms,
           workdays: acc[s.name].workdays,
           reports: repCount[s.name],
+          sales: salesSum[s.name],
         }))
       );
       setLoading(false);
@@ -127,7 +135,13 @@ export default function StoreDashboard() {
                 {s.name}
               </span>
             </div>
-            <div style={{ display: "flex", gap: 18, marginTop: 4 }}>
+            <div style={{ display: "flex", gap: 18, marginTop: 4, flexWrap: "wrap" }}>
+              <div>
+                <b style={{ fontSize: 16 }}>
+                  {s.sales ? `${s.sales.toLocaleString()}円` : "—"}
+                </b>
+                <div style={{ fontSize: 12, color: "var(--ink2)" }}>売上</div>
+              </div>
               <div>
                 <b style={{ fontSize: 16 }}>{fmtDur(s.ms)}</b>
                 <div style={{ fontSize: 12, color: "var(--ink2)" }}>労働時間</div>

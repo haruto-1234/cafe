@@ -125,6 +125,26 @@ export default function StaffPanel({ profile }) {
     logAudit(profile, toInactive ? "退職" : "復帰", p.full_name || "スタッフ");
   }
 
+  async function resetPassword(p) {
+    const np = prompt(
+      `${p.full_name || "このスタッフ"} の新しい仮パスワードを入力（6文字以上）。\nこれを本人に伝えてください。`
+    );
+    if (np == null) return;
+    if (np.length < 6) {
+      alert("6文字以上にしてください。");
+      return;
+    }
+    const { data, error } = await supabase.functions.invoke("reset-password", {
+      body: { targetId: p.id, newPassword: np },
+    });
+    if (error || data?.error) {
+      alert("初期化できませんでした：" + (data?.error || error?.message || ""));
+      return;
+    }
+    toast(`${p.full_name || "スタッフ"} のパスワードを初期化しました`);
+    logAudit(profile, "パスワード初期化", p.full_name || "スタッフ");
+  }
+
   return (
     <section className="card form">
       <p className="form-title">
@@ -269,13 +289,23 @@ export default function StaffPanel({ profile }) {
                 )}
 
                 {!isSelf && canEdit && (
-                  <button
-                    type="button"
-                    className={"act-btn" + (inactive ? " primary" : " danger")}
-                    onClick={() => toggleActive(p)}
-                  >
-                    {inactive ? "復帰" : "退職"}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="act-btn"
+                      title="パスワード初期化"
+                      onClick={() => resetPassword(p)}
+                    >
+                      🔑
+                    </button>
+                    <button
+                      type="button"
+                      className={"act-btn" + (inactive ? " primary" : " danger")}
+                      onClick={() => toggleActive(p)}
+                    >
+                      {inactive ? "復帰" : "退職"}
+                    </button>
+                  </>
                 )}
               </div>
             );

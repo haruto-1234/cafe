@@ -14,8 +14,6 @@ export default function ReportForm({ profile, onPosted }) {
   const [store, setStore] = useState(profile?.store || STORES[0].name);
   const [author, setAuthor] = useState(profile?.full_name || "");
   const [body, setBody] = useState("");
-  const [sales, setSales] = useState("");
-  const [customers, setCustomers] = useState("");
   const [files, setFiles] = useState([]); // 選んだ写真
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -80,8 +78,6 @@ export default function ReportForm({ profile, onPosted }) {
           body: b,
           user_id: profile.id,
           photos,
-          sales: sales ? Number(sales) : null,
-          customers: customers ? Number(customers) : null,
         })
         .select()
         .single();
@@ -89,8 +85,6 @@ export default function ReportForm({ profile, onPosted }) {
       onPosted(data); // 一覧の先頭に追加してもらう
       toast("日報を投稿しました");
       setBody(""); // 本文だけ消す（日付・店舗・名前は次の投稿用に残す）
-      setSales("");
-      setCustomers("");
       setFiles([]);
     } catch (e) {
       const m = e?.message || "";
@@ -166,31 +160,6 @@ export default function ReportForm({ profile, onPosted }) {
           value={body}
           onChange={(e) => setBody(e.target.value)}
         />
-      </div>
-
-      <div className="row">
-        <div className="field">
-          <label htmlFor="sales">売上（円）</label>
-          <input
-            id="sales"
-            type="number"
-            inputMode="numeric"
-            placeholder="任意"
-            value={sales}
-            onChange={(e) => setSales(e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="customers">客数</label>
-          <input
-            id="customers"
-            type="number"
-            inputMode="numeric"
-            placeholder="任意"
-            value={customers}
-            onChange={(e) => setCustomers(e.target.value)}
-          />
-        </div>
       </div>
 
       <div className="field">

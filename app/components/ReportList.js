@@ -6,6 +6,7 @@ import { STORES, storeColor } from "@/lib/constants";
 import { fmtDate, fmtTime } from "@/lib/format";
 import { findNgWord } from "@/lib/ng";
 import { canEditReport, canDeleteReport } from "@/lib/permissions";
+import { logAudit } from "@/lib/audit";
 
 // 写真の保存パス → 表示用のURL に変換
 function photoUrl(path) {
@@ -72,6 +73,7 @@ export default function ReportList({ reports, profile, onUpdated, onDeleted }) {
         }
       }
       if (editingId === r.id) setEditingId(null);
+      logAudit(profile, "日報削除", `${r.author || ""} ${r.report_date || ""}`);
       onDeleted(r.id);
     } catch (e) {
       alert("削除できませんでした");

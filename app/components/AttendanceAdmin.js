@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { fmtTime, todayStr } from "@/lib/format";
 import { localDateStr, fmtDur, computeWork } from "@/lib/attendance";
+import { logAudit } from "@/lib/audit";
 
 const PUNCH_LABELS = {
   in: "出勤",
@@ -22,7 +23,7 @@ const inputStyle = {
   color: "var(--ink)",
 };
 
-export default function AttendanceAdmin() {
+export default function AttendanceAdmin({ profile }) {
   const [date, setDate] = useState(todayStr());
   const [rows, setRows] = useState([]);
   const [staff, setStaff] = useState([]);
@@ -70,15 +71,20 @@ export default function AttendanceAdmin() {
   });
   const ids = Object.keys(byUser);
 
-  async function deletePunch(id) {
+  async function deletePunch(r) {
     if (!confirm("この打刻を削除します。よろしいですか？")) return;
     setBusy(true);
-    const { error } = await supabase.from("attendance").delete().eq("id", id);
+    const { error } = await supabase.from("attendance").delete().eq("id", r.id);
     setBusy(false);
     if (error) {
       alert("削除できませんでした。権限のSQLが実行されているか確認してください。");
       return;
     }
+    logAudit(
+      profile,
+      "打刻削除",
+      `${nameOf(r.user_id)} ${PUNCH_LABELS[r.type]} ${fmtTime(r.created_at)}`
+    );
     await load();
   }
 
@@ -99,6 +105,11 @@ export default function AttendanceAdmin() {
       alert("追加できませんでした。権限のSQLが実行されているか確認してください。");
       return;
     }
+    logAudit(
+      profile,
+      "打刻追加",
+      `${nameOf(addStaffId)} ${PUNCH_LABELS[addType]} ${addTime}`
+    );
     await load();
   }
 
@@ -221,7 +232,7 @@ export default function AttendanceAdmin() {
                         className="act-btn danger"
                         style={{ marginLeft: "auto" }}
                         disabled={busy}
-                        onClick={() => deletePunch(r.id)}
+                        onClick={() => deletePunch(r)}
                       >
                         削除
                       </button>

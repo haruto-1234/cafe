@@ -9,6 +9,7 @@ import { toast } from "@/lib/toast";
 import AttendanceAdmin from "./AttendanceAdmin";
 import MonthlyReport from "./MonthlyReport";
 import StoreDashboard from "./StoreDashboard";
+import AuditLog from "./AuditLog";
 
 const PUNCH_LABELS = {
   in: "出勤",
@@ -147,8 +148,9 @@ export default function Attendance({ profile }) {
       {canManageRoles(profile) && (
         <>
           <StoreDashboard />
-          <AttendanceAdmin />
+          <AttendanceAdmin profile={profile} />
           <MonthlyReport />
+          <AuditLog />
         </>
       )}
     </div>
